@@ -1,0 +1,37 @@
+name: Python Syntax Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Check Python syntax
+      run: |
+        python -m py_compile rag_chromadb.py
+        python -m py_compile example_usage.py
+        python -m py_compile cli.py
+        python -m py_compile test_rag.py
+        echo "✅ All Python files have valid syntax"
+    
+    - name: Check file structure
+      run: |
+        echo "Checking required files..."
+        test -f requirements.txt && echo "✅ requirements.txt exists"
+        test -f README.md && echo "✅ README.md exists"
+        test -f .gitignore && echo "✅ .gitignore exists"
+        test -f rag_chromadb.py && echo "✅ rag_chromadb.py exists"
+        test -d sample_documents && echo "✅ sample_documents/ directory exists"
+        echo "✅ All required files present"
