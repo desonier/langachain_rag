@@ -1,0 +1,33 @@
+services:
+  langchain-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: langchain-rag-app
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      # Persist ChromaDB data
+      - ./chroma_data:/app/chroma_data
+      # Mount app for development (optional)
+      - ./app.py:/app/app.py
+    restart: unless-stopped
+    networks:
+      - langchain-network
+
+  # Optional: ChromaDB standalone server (if you want a separate service)
+  # chromadb:
+  #   image: chromadb/chroma:latest
+  #   container_name: chromadb-server
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./chroma_data:/chroma/chroma
+  #   environment:
+  #     - IS_PERSISTENT=TRUE
+  #   networks:
+  #     - langchain-network
+
+networks:
+  langchain-network:
+    driver: bridge
