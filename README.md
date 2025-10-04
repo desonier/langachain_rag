@@ -60,6 +60,36 @@ Run the example script:
 python example_usage.py
 ```
 
+### Using the Command-Line Interface
+
+The CLI provides a simple way to interact with the RAG system:
+
+**Create a vector store:**
+```bash
+python cli.py create ./sample_documents
+```
+
+**Query the RAG system:**
+```bash
+python cli.py query "What is artificial intelligence?"
+```
+
+**Show sources used:**
+```bash
+python cli.py query "What is machine learning?" --show-sources
+```
+
+**Perform similarity search:**
+```bash
+python cli.py search "neural networks" -k 3
+```
+
+**Use custom ChromaDB location:**
+```bash
+python cli.py --persist-dir ./my_db create ./my_documents
+python cli.py --persist-dir ./my_db query "My question"
+```
+
 ### Basic Usage
 
 ```python
@@ -124,19 +154,35 @@ Answer:"""
 response = rag.query_with_custom_prompt("Your question", custom_prompt)
 ```
 
+### Interactive Tutorial
+
+For an interactive learning experience, open the Jupyter notebook:
+
+```bash
+jupyter notebook tutorial.ipynb
+```
+
+The notebook includes step-by-step examples with explanations.
+
 ## Project Structure
 
 ```
 langachain_rag/
 ├── rag_chromadb.py          # Main RAG implementation
 ├── example_usage.py         # Example usage script
+├── cli.py                   # Command-line interface
+├── test_rag.py             # Test script
+├── tutorial.ipynb          # Jupyter notebook tutorial
 ├── requirements.txt         # Project dependencies
 ├── sample_documents/        # Sample documents for testing
 │   ├── ai_overview.txt
 │   ├── machine_learning.txt
 │   └── neural_networks.txt
 ├── .env                     # Environment variables (create this)
+├── .env.example            # Example environment file
 ├── .gitignore              # Git ignore file
+├── QUICKSTART.md           # Quick start guide
+├── LICENSE                 # MIT License
 └── README.md               # This file
 ```
 
