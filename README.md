@@ -43,10 +43,18 @@ cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 ```
 
-### 3. Build and run with Docker Compose
+### 3. Test the setup (optional)
+
+Run the test script to verify Docker is properly configured:
 
 ```bash
-docker-compose up --build
+./test_setup.sh
+```
+
+### 4. Build and run with Docker Compose
+
+```bash
+docker compose up --build
 ```
 
 The application will:
@@ -56,10 +64,10 @@ The application will:
 - Demonstrate similarity search queries
 - Persist data in the `chroma_data` directory
 
-### 4. View logs
+### 5. View logs
 
 ```bash
-docker-compose logs -f langchain-app
+docker compose logs -f langchain-app
 ```
 
 ## Project Structure
@@ -70,6 +78,7 @@ langachain_rag/
 ├── requirements.txt       # Python dependencies
 ├── Dockerfile            # Docker image definition
 ├── docker-compose.yml    # Docker Compose configuration
+├── test_setup.sh         # Setup verification script
 ├── .env.example          # Example environment variables
 ├── .gitignore           # Git ignore rules
 └── README.md            # This file
@@ -200,6 +209,7 @@ This project is open source and available under the MIT License.
 - [ChromaDB Documentation](https://docs.trychroma.com/)
 - [Docker Documentation](https://docs.docker.com/)
 - [HuggingFace Transformers](https://huggingface.co/docs/transformers/)
+- [Docker Configuration Guide](DOCKER.md) - Detailed Docker setup and troubleshooting
 
 ## Acknowledgments
 
