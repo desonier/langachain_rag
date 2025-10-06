@@ -1,0 +1,6 @@
+# Create a virtual environment (optional but recommended)
+python -m venv rag-env
+source rag-env/bin/activate  # On Windows: rag-env\Scripts\activate
+
+# Install required packages
+pip install langchain chromadb openai tiktoken
