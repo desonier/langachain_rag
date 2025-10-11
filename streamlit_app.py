@@ -479,7 +479,17 @@ def display_ranking_results_streamlit(ranking_results):
                 
                 # Resume source information
                 st.write("**📂 Resume Source:**")
-                st.write(f"• **File:** {resume.get('document_name', 'Unknown')}")
+                
+                # Display actual filename from display_filename or extract from file_path
+                actual_filename = resume.get('display_filename', '')
+                if not actual_filename:
+                    file_path = resume.get('file_path', '')
+                    if file_path:
+                        actual_filename = os.path.basename(file_path)
+                    else:
+                        actual_filename = 'Unknown'
+                
+                st.write(f"• **File:** {actual_filename}")
                 st.write(f"• **Format:** {resume.get('file_format', 'Unknown')}")
                 
                 # Use display filename for better source path
@@ -531,23 +541,42 @@ def display_ranking_results_streamlit(ranking_results):
                         for cert in cert_list:
                             st.write(f"• {cert}")
             
-            # Source documents section
+            # Source documents section - enhanced and more prominent
             source_docs = resume.get('source_documents', [])
             if source_docs:
                 st.write("---")
-                st.write("**📄 Relevant Resume Sections:**")
+                st.write("**📄 Source Document Sections**")
+                st.caption(f"Showing {len(source_docs[:3])} most relevant sections from this resume")
                 
-                for j, doc in enumerate(source_docs[:2]):  # Show top 2 matching sections
+                for j, doc in enumerate(source_docs[:3]):  # Show top 3 matching sections
                     section_name = doc.metadata.get('section_name', f'Section {j+1}')
-                    with st.expander(f"📋 {section_name}", expanded=False):
-                        st.write(doc.page_content[:400] + "..." if len(doc.page_content) > 400 else doc.page_content)
+                    chunk_type = doc.metadata.get('chunk_type', 'Content')
+                    
+                    # Create a more descriptive title for the expander
+                    expander_title = f"📋 {section_name}"
+                    if chunk_type and chunk_type != 'Content':
+                        expander_title += f" ({chunk_type})"
+                    
+                    with st.expander(expander_title, expanded=(j == 0)):  # Expand first section by default
+                        # Show the content with better formatting
+                        content = doc.page_content.strip()
+                        if len(content) > 800:
+                            content = content[:800] + "..."
                         
-                        # Show metadata for this section
-                        st.write("**Section Details:**")
-                        st.write(f"• **Type:** {doc.metadata.get('chunk_type', 'N/A')}")
-                        st.write(f"• **Chunk ID:** {doc.metadata.get('chunk_id', 'N/A')}")
-                        if doc.metadata.get('section_order'):
-                            st.write(f"• **Order:** {doc.metadata.get('section_order')}")
+                        st.markdown(f"```\n{content}\n```")
+                        
+                        # Show metadata for this section in a compact way
+                        meta_col1, meta_col2 = st.columns(2)
+                        with meta_col1:
+                            st.caption(f"📍 **Section:** {section_name}")
+                            if doc.metadata.get('section_order'):
+                                st.caption(f"🔢 **Order:** #{doc.metadata.get('section_order')}")
+                        with meta_col2:
+                            st.caption(f"📂 **Chunk ID:** {doc.metadata.get('chunk_id', 'N/A')}")
+                            st.caption(f"📄 **Type:** {chunk_type}")
+            else:
+                st.write("---")
+                st.info("📄 No specific source sections available for this resume")
             
             # Download/view resume button (if file path exists)
             # Try original file path first, then fallback to actual file path

@@ -87,6 +87,50 @@ class ResumeIngestPipeline:
         except Exception as e:
             print(f"Could not load existing resume IDs: {e}")
     
+    def _is_temp_filename(self, filename):
+        """Check if filename appears to be a temporary file"""
+        if not filename:
+            return False
+        
+        basename = os.path.basename(filename).lower()
+        
+        # Common temp file patterns
+        temp_patterns = [
+            r'^tmp[a-z0-9_-]+\.(pdf|docx)$',  # tmpXXXXX.pdf
+            r'^temp[a-z0-9_-]+\.(pdf|docx)$', # tempXXXXX.pdf
+            r'^[a-z0-9]{8,}\.(pdf|docx)$',    # Random hash names
+        ]
+        
+        for pattern in temp_patterns:
+            if re.match(pattern, basename):
+                return True
+        
+        # Check for temp directory paths
+        if 'temp' in filename.lower() or 'tmp' in filename.lower():
+            return True
+            
+        return False
+    
+    def _extract_original_filename(self, file_path, original_filename=None):
+        """Extract the best original filename, avoiding temp names"""
+        # If original_filename provided and not temp, use it
+        if original_filename and not self._is_temp_filename(original_filename):
+            return original_filename
+        
+        # If file_path is not temp, use it
+        if not self._is_temp_filename(file_path):
+            return file_path
+        
+        # If both are temp files, try to construct a meaningful name
+        if original_filename:
+            # Extract extension from original_filename
+            ext = os.path.splitext(original_filename)[1]
+            return f"Resume{ext}"
+        
+        # Fallback - extract extension from file_path
+        ext = os.path.splitext(file_path)[1]
+        return f"Resume{ext}"
+    
     def _generate_resume_id(self, file_path):
         """Generate consistent Resume_ID based on file path"""
         file_name = os.path.basename(file_path)
@@ -249,14 +293,18 @@ class ResumeIngestPipeline:
     
     def _create_resume_metadata(self, file_path, extracted_info=None, original_filename=None):
         """Create metadata for resume with LLM-extracted information"""
-        # Use original filename if provided, otherwise use file path
-        display_path = original_filename or file_path
+        # Get the best original filename, avoiding temp names
+        best_original = self._extract_original_filename(file_path, original_filename)
+        display_path = best_original
         file_name = os.path.basename(display_path)
         file_extension = display_path.split('.')[-1].upper()
         
-        # Generate Resume_ID based on original filename if available
-        id_source = original_filename or file_path
-        resume_id = self._generate_resume_id(id_source)
+        # Generate Resume_ID based on best original filename
+        resume_id = self._generate_resume_id(best_original)
+        
+        # Warn if we detected temp filenames
+        if self._is_temp_filename(file_path) or self._is_temp_filename(original_filename or ''):
+            print(f"   ⚠️  Temp filename detected, using clean name: {file_name}")
         
         # Base metadata
         metadata = {
@@ -264,13 +312,14 @@ class ResumeIngestPipeline:
             "Resume_Date": datetime.now().isoformat(),
             "Source": f"{file_extension} resume",
             "file_path": file_path,  # Keep actual file path for processing
-            "original_file_source": os.path.abspath(original_filename) if original_filename else os.path.abspath(file_path),
-            "display_filename": file_name,  # Add display filename for UI
+            "original_file_source": os.path.abspath(best_original),  # Use clean original name
+            "display_filename": file_name,  # Clean filename for UI display
             "content_type": "resume",
             "file_format": file_extension,
             "document_name": file_name,
             "last_updated": datetime.now().isoformat(),
-            "parsing_method": "llm_assisted" if self.enable_llm_parsing else "basic"
+            "parsing_method": "llm_assisted" if self.enable_llm_parsing else "basic",
+            "is_temp_file": self._is_temp_filename(file_path)  # Track if original was temp
         }
         
         # Add LLM-extracted information if available
@@ -332,15 +381,16 @@ class ResumeIngestPipeline:
     def add_resume(self, file_path, force_update=False, original_filename=None):
         """Add resume to database (prevents duplicates unless force_update=True)"""
         try:
-            print(f"\n Processing: {original_filename or file_path}")
+            # Get clean display name for logging
+            clean_name = self._extract_original_filename(file_path, original_filename)
+            print(f"\n Processing: {clean_name}")
             
             # Check if file exists
             if not os.path.exists(file_path):
                 print(f"File not found: {file_path}")
                 return False, None, 0
             
-            # Generate metadata and Resume_ID using original filename if provided
-            display_name = original_filename or file_path
+            # Generate metadata and Resume_ID using enhanced filename handling
             file_metadata, resume_id = self._create_resume_metadata(file_path, original_filename=original_filename)
             
             # Check if already processed
