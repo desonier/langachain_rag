@@ -24,7 +24,7 @@ def get_chromadb_summary():
     try:
         # Connect to ChromaDB
         db = Chroma(
-            persist_directory="./chroma_store",
+            persist_directory="./resume_vectordb",
             embedding_function=embedding
         )
         
@@ -69,7 +69,7 @@ def get_chromadb_summary():
             print(f"   • {source}: {count} chunks")
         
         # Show collection info
-        client = chromadb.PersistentClient(path="./chroma_store")
+        client = chromadb.PersistentClient(path="./resume_vectordb")
         collections = client.list_collections()
         
         print(f"\n🗂️  Collections: {len(collections)}")
@@ -92,7 +92,7 @@ def list_specific_file_chunks(file_name):
     
     try:
         db = Chroma(
-            persist_directory="./chroma_store",
+            persist_directory="./resume_vectordb",
             embedding_function=embedding
         )
         

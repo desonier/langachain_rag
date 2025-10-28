@@ -15,7 +15,7 @@ load_dotenv()
 def clear_chromadb():
     """Clear the existing ChromaDB to start fresh"""
     import shutil
-    persist_directory = "./chroma_store"
+    persist_directory = "./resume_vectordb"
     
     if os.path.exists(persist_directory):
         try:
@@ -113,7 +113,7 @@ def process_independent_documents():
             print(f"   ❌ Error processing {file_path}: {e}")
     
     # Create ChromaDB with all independent documents
-    persist_directory = "./chroma_store"
+    persist_directory = "./resume_vectordb"
     
     db = Chroma.from_documents(
         documents=all_docs,

@@ -57,22 +57,39 @@ class ResumeIngestPipeline:
     def _init_database(self):
         """Initialize vector database"""
         try:
-            if os.path.exists(self.persist_directory):
+            # Check if the specific ChromaDB SQLite file exists
+            chroma_db_file = os.path.join(self.persist_directory, "chroma.sqlite3")
+            
+            if os.path.exists(chroma_db_file):
+                # SQLite database file exists, load existing database
                 self.db = Chroma(
                     persist_directory=self.persist_directory,
                     embedding_function=self.embedding
                 )
-                print("Loaded existing resume database")
+                print(f"✅ Found existing ChromaDB SQLite file: {chroma_db_file}")
+                print("📂 Loaded existing resume database")
+                self._load_existing_resume_ids()
+            elif os.path.exists(self.persist_directory):
+                # Directory exists but no SQLite file, might be empty or corrupted
+                print(f"⚠️  Directory exists but no ChromaDB SQLite file found at: {chroma_db_file}")
+                print("🔄 Attempting to load existing database...")
+                self.db = Chroma(
+                    persist_directory=self.persist_directory,
+                    embedding_function=self.embedding
+                )
+                print("📂 Loaded existing resume database")
                 self._load_existing_resume_ids()
             else:
+                # Neither directory nor SQLite file exists, create new
+                print(f"🆕 Creating new ChromaDB at: {self.persist_directory}")
                 self.db = Chroma(
                     embedding_function=self.embedding,
                     persist_directory=self.persist_directory
                 )
-                print("Created new resume database")
+                print("📂 Created new resume database")
                 
         except Exception as e:
-            print(f"Error initializing database: {e}")
+            print(f"❌ Error initializing database: {e}")
             raise
     
     def _load_existing_resume_ids(self):

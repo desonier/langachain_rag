@@ -21,7 +21,7 @@ def analyze_document_independence():
     
     try:
         db = Chroma(
-            persist_directory="./chroma_store",
+            persist_directory="./resume_vectordb",
             embedding_function=embedding
         )
         
@@ -107,7 +107,7 @@ def test_document_specific_queries():
     
     try:
         db = Chroma(
-            persist_directory="./chroma_store",
+            persist_directory="./resume_vectordb",
             embedding_function=embedding
         )
         

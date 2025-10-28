@@ -28,14 +28,21 @@ class ResumeQuerySystem:
     def _init_system(self):
         """Initialize vector database and LLM"""
         try:
-            # Check if database exists
-            if not os.path.exists(self.persist_directory):
-                print(f"❌ Database not found at {self.persist_directory}")
+            # Check if the specific ChromaDB SQLite file exists
+            chroma_db_file = os.path.join(self.persist_directory, "chroma.sqlite3")
+            
+            if not os.path.exists(chroma_db_file):
+                print(f"❌ ChromaDB SQLite file not found at: {chroma_db_file}")
+                if not os.path.exists(self.persist_directory):
+                    print(f"❌ Database directory not found at: {self.persist_directory}")
+                else:
+                    print(f"⚠️  Database directory exists but no SQLite file found")
                 print("💡 Please run the ingest pipeline first to create the database:")
                 print("   python ingest_pipeline.py --directory ./data")
-                raise FileNotFoundError(f"Database not found: {self.persist_directory}")
+                raise FileNotFoundError(f"ChromaDB SQLite file not found: {chroma_db_file}")
             
-            # Load database
+            # Load database - SQLite file exists
+            print(f"✅ Found ChromaDB SQLite file: {chroma_db_file}")
             self.db = Chroma(
                 persist_directory=self.persist_directory,
                 embedding_function=self.embedding

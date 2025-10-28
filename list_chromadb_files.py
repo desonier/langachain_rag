@@ -22,7 +22,7 @@ def list_chromadb_contents():
     )
     
     # Connect to existing ChromaDB
-    persist_directory = "./chroma_store"
+    persist_directory = "./resume_vectordb"
     
     try:
         # Load existing vector store
@@ -111,7 +111,7 @@ def list_collections():
     
     try:
         # Direct ChromaDB client access
-        client = chromadb.PersistentClient(path="./chroma_store")
+        client = chromadb.PersistentClient(path="./resume_vectordb")
         collections = client.list_collections()
         
         if not collections:
@@ -143,7 +143,7 @@ def search_by_metadata(filter_criteria):
     
     try:
         db = Chroma(
-            persist_directory="./chroma_store",
+            persist_directory="./resume_vectordb",
             embedding_function=embedding
         )
         
