@@ -1,0 +1,10 @@
+ChromaDB
+Flask
+Flask-WTF
+Flask-SQLAlchemy
+python-dotenv
+requests
+pandas
+numpy
+pytest
+pytest-cov

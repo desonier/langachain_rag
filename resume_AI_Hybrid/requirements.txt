@@ -1,0 +1,26 @@
+# Core LangChain packages
+langchain-community
+langchain-openai
+langchain-chroma
+langchain
+
+# Azure OpenAI
+openai
+
+# Document processing
+pypdf
+docx2txt
+
+# Vector database
+chromadb
+
+# Environment management
+python-dotenv
+
+# Web interface
+streamlit
+pandas
+
+# Additional utilities
+flask
+sentence-transformers
