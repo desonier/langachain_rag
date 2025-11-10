@@ -1,0 +1,20 @@
+John Smith
+Software Engineer
+
+EXPERIENCE:
+- 5 years of Python development
+- Experience with Flask and Django frameworks
+- Machine learning and AI expertise
+- Database management with PostgreSQL and MongoDB
+
+EDUCATION:
+- Bachelor's in Computer Science
+- Master's in Data Science
+
+SKILLS:
+- Python, JavaScript, SQL
+- Docker, Kubernetes
+- AWS, Azure cloud platforms
+- Git version control
+
+Contact: john.smith@example.com

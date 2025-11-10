@@ -36,6 +36,8 @@ if 'ingest_pipeline' not in st.session_state:
     st.session_state.ingest_pipeline = None
 if 'query_system' not in st.session_state:
     st.session_state.query_system = None
+if 'current_collection' not in st.session_state:
+    st.session_state.current_collection = None
 if 'db_path' not in st.session_state:
     # Use shared configuration for consistent database path
     st.session_state.db_path = get_vector_db_path()
@@ -57,16 +59,31 @@ def initialize_ingest_pipeline(db_path, enable_llm):
         st.error(f"Failed to initialize ingest pipeline: {e}")
         return False
 
-def initialize_query_system(db_path):
-    """Initialize the query system"""
+def initialize_query_system(db_path, collection_name=None):
+    """Initialize the query system with shared configuration"""
     try:
         if st.session_state.query_system is None or st.session_state.db_path != db_path:
-            st.session_state.query_system = ResumeQuerySystem(persist_directory=db_path)
+            st.session_state.query_system = ResumeQuerySystem(persist_directory=db_path, collection_name=collection_name)
             st.session_state.db_path = db_path
+            st.session_state.current_collection = collection_name
         return True
     except Exception as e:
         st.error(f"Failed to initialize query system: {e}")
         return False
+
+def get_available_collections(db_path):
+    """Get list of available collections from ChromaDB using factory"""
+    try:
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from chromadb_factory import list_collections
+        
+        collections = list_collections(db_path)
+        return collections if collections else []
+    except Exception as e:
+        st.error(f"Error getting collections: {e}")
+        return []
 
 def ingest_tab():
     """Ingest tab functionality"""
@@ -327,26 +344,82 @@ def query_tab():
     st.header("🔍 Resume Query System")
     st.write("Search and query resume information from the vector database.")
     
-    # Configuration
-    db_path = st.text_input(
-        "Database Path",
-        value=st.session_state.db_path,  # Use shared configuration
-        help="Path to the vector database to query",
-        key="query_db_path"
-    )
+    # Configuration section
+    st.subheader("⚙️ Configuration")
+    st.write("Set up your database connection and select which collection to query.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        db_path = st.text_input(
+            "Database Path",
+            value=st.session_state.db_path,  # Use shared configuration
+            help="Path to the vector database to query",
+            key="query_db_path"
+        )
+    
+    with col2:
+        # Get available collections
+        available_collections = []
+        if os.path.exists(db_path):
+            available_collections = get_available_collections(db_path)
+        
+        # Collection selection
+        if available_collections:
+            collection_options = ["(Default Collection)"] + available_collections
+            selected_collection = st.selectbox(
+                "Select Collection",
+                options=collection_options,
+                index=0,
+                help="Choose which collection to query from. Each collection may contain different types or sets of documents.",
+                key="selected_collection"
+            )
+            
+            # Convert selection to actual collection name
+            collection_name = None if selected_collection == "(Default Collection)" else selected_collection
+            
+            # Show collection info
+            if collection_name:
+                st.info(f"🎯 **Selected:** {collection_name}")
+            else:
+                st.info("🎯 **Selected:** Default Collection")
+        else:
+            st.warning("⚠️ No collections found. Initialize the query system to see available collections.")
+            collection_name = None
     
     # Initialize query system
-    if st.button("Initialize Query System", type="primary"):
-        with st.spinner("Initializing query system..."):
-            if initialize_query_system(db_path):
-                st.success("✅ Query system initialized successfully!")
-                st.rerun()  # Refresh to show database info
-            else:
-                return
+    init_col1, init_col2 = st.columns([2, 1])
+    
+    with init_col1:
+        if st.button("Initialize Query System", type="primary"):
+            with st.spinner("Initializing query system..."):
+                if initialize_query_system(db_path, collection_name):
+                    if collection_name:
+                        st.success(f"✅ Query system initialized successfully with collection: {collection_name}")
+                    else:
+                        st.success("✅ Query system initialized successfully with default collection!")
+                    st.rerun()  # Refresh to show database info
+                else:
+                    return
+    
+    with init_col2:
+        if st.button("🔄 Refresh Collections", help="Refresh the list of available collections"):
+            st.rerun()
     
     if st.session_state.query_system is None:
         st.warning("⚠️ Please initialize the query system first")
+        
+        # Show available collections info if any
+        if available_collections:
+            st.info(f"📂 Found {len(available_collections)} collections: {', '.join(available_collections)}")
         return
+    
+    # Show current collection info
+    current_collection = getattr(st.session_state, 'current_collection', None)
+    if current_collection:
+        st.info(f"🎯 Currently querying collection: **{current_collection}**")
+    else:
+        st.info("🎯 Currently querying: **Default Collection**")
     
     # Show database information when system is ready
     st.divider()
@@ -697,6 +770,26 @@ def display_ranking_results_streamlit(ranking_results):
 def show_database_info():
     """Show enhanced database information in query tab"""
     try:
+        # Show current collection info
+        current_collection = getattr(st.session_state, 'current_collection', None)
+        if current_collection:
+            st.info(f"📂 **Current Collection:** {current_collection}")
+        else:
+            st.info("📂 **Current Collection:** Default Collection")
+        
+        # Show available collections
+        db_path = st.session_state.db_path
+        available_collections = get_available_collections(db_path)
+        if available_collections:
+            with st.expander(f"📁 Available Collections ({len(available_collections)})", expanded=False):
+                cols = st.columns(min(len(available_collections), 4))
+                for i, collection in enumerate(available_collections):
+                    with cols[i % 4]:
+                        if collection == current_collection:
+                            st.success(f"🎯 **{collection}** (active)")
+                        else:
+                            st.write(f"📂 {collection}")
+        
         resumes = st.session_state.query_system.list_resumes()
         total_chunks = sum(resume['chunk_count'] for resume in resumes)
         

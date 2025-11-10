@@ -19,13 +19,16 @@ load_dotenv()
 class ResumeQuerySystem:
     """Resume Query System - Queries resumes from vector database using shared configuration"""
     
-    def __init__(self, persist_directory=None):
+    def __init__(self, persist_directory=None, collection_name=None):
         # Use shared configuration
         self.config = get_config()
         self.persist_directory = persist_directory or get_vector_db_path()
+        self.collection_name = collection_name  # Store collection name for later use
         
         print(f"🔧 Initializing Resume Query System")
         print(f"📁 Database path: {self.persist_directory}")
+        if collection_name:
+            print(f"📂 Target collection: {collection_name}")
         
         # Create embeddings using shared configuration
         embedding_config = get_embedding_config()
@@ -39,7 +42,12 @@ class ResumeQuerySystem:
     def _init_system(self):
         """Initialize vector database and LLM"""
         try:
-            # Check if the specific ChromaDB SQLite file exists
+            # Import the factory
+            import sys
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from chromadb_factory import get_chromadb_instance, check_collection_exists
+            
+            # Check if the database directory exists
             chroma_db_file = os.path.join(self.persist_directory, "chroma.sqlite3")
             
             if not os.path.exists(chroma_db_file):
@@ -52,13 +60,20 @@ class ResumeQuerySystem:
                 print("   python ingest_pipeline.py --directory ./data")
                 raise FileNotFoundError(f"ChromaDB SQLite file not found: {chroma_db_file}")
             
-            # Load database - SQLite file exists
-            print(f"✅ Found ChromaDB SQLite file: {chroma_db_file}")
-            self.db = Chroma(
+            # Check if specific collection exists if specified
+            if self.collection_name:
+                if not check_collection_exists(self.persist_directory, self.collection_name):
+                    print(f"❌ Collection '{self.collection_name}' not found")
+                    print("💡 Available collections can be viewed in the admin interface")
+                    raise ValueError(f"Collection '{self.collection_name}' not found")
+            
+            # Use the factory to get a consistent ChromaDB instance
+            self.db = get_chromadb_instance(
                 persist_directory=self.persist_directory,
-                embedding_function=self.embedding
+                collection_name=self.collection_name
             )
-            print("📂 Loaded resume database successfully")
+            
+            print("📂 Database loaded successfully")
             
             # Initialize LLM with shared configuration
             azure_config = get_azure_llm_config()

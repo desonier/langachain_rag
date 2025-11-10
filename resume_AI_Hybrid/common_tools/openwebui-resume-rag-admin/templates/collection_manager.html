@@ -258,6 +258,10 @@
                                                             {% if not collection.has_data %}disabled{% endif %}>
                                                         <i class="fas fa-eye"></i> View
                                                     </button>
+                                                    <button class="btn btn-outline-success btn-sm" 
+                                                            onclick="bulkUpload('{{ collection.name }}')">
+                                                        <i class="fas fa-upload"></i> Bulk Upload
+                                                    </button>
                                                     <button class="btn btn-outline-warning btn-sm" 
                                                             onclick="clearCollection('{{ collection.name }}')"
                                                             {% if not collection.has_data %}disabled{% endif %}>
@@ -480,6 +484,11 @@
                 hideLoading();
                 showAlert('error', 'Error clearing collection: ' + error.message);
             });
+        }
+
+        function bulkUpload(collectionName) {
+            // Navigate to the bulk upload page for this collection
+            window.location.href = `/admin/collections/${encodeURIComponent(collectionName)}/upload`;
         }
 
         function viewCollectionContents(collectionName) {

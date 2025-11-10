@@ -1,0 +1,35 @@
+Jane Doe
+Data Scientist
+
+PROFESSIONAL SUMMARY:
+Experienced data scientist with expertise in machine learning, statistical analysis, and data visualization.
+
+EXPERIENCE:
+Senior Data Scientist - Tech Corp (2020-2024)
+- Led machine learning projects using Python and R
+- Developed predictive models for customer behavior
+- Collaborated with cross-functional teams
+- Managed data pipelines and ETL processes
+
+Data Analyst - Analytics Inc (2018-2020)
+- Performed statistical analysis on large datasets
+- Created dashboards and reports using Tableau
+- Implemented A/B testing frameworks
+
+EDUCATION:
+- PhD in Statistics from University of Data Science
+- MS in Computer Science
+
+TECHNICAL SKILLS:
+- Programming: Python, R, SQL, Scala
+- ML/AI: scikit-learn, TensorFlow, PyTorch
+- Visualization: Tableau, matplotlib, seaborn
+- Cloud: AWS, GCP, Azure
+- Databases: PostgreSQL, MongoDB, Cassandra
+
+CERTIFICATIONS:
+- AWS Certified Machine Learning - Specialty
+- Google Cloud Professional Data Engineer
+
+Contact: jane.doe@example.com
+Phone: (555) 123-4567

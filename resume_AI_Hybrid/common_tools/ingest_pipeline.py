@@ -5,12 +5,43 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
-from langchain_text_splitters import CharacterTextSplitter
-from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from langchain_core.documents import Document
+
+# Try to import langchain_community components, fallback if not available
+try:
+    from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
+    from langchain_text_splitters import CharacterTextSplitter
+    from langchain_chroma import Chroma
+    from langchain_core.documents import Document
+    LANGCHAIN_COMMUNITY_AVAILABLE = True
+except ImportError:
+    # Fallback imports for older langchain or missing langchain_community
+    try:
+        from langchain.document_loaders import PyPDFLoader, Docx2txtLoader
+        from langchain.text_splitter import CharacterTextSplitter
+        from langchain.vectorstores import Chroma
+        from langchain.schema import Document
+        LANGCHAIN_COMMUNITY_AVAILABLE = True
+    except ImportError:
+        print("⚠️ LangChain document loaders not available. Some functionality may be limited.")
+        PyPDFLoader = None
+        Docx2txtLoader = None
+        CharacterTextSplitter = None
+        Chroma = None
+        Document = None
+        LANGCHAIN_COMMUNITY_AVAILABLE = False
+
+try:
+    from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
+except ImportError:
+    print("⚠️ LangChain OpenAI not available")
+    AzureOpenAIEmbeddings = None
+    AzureChatOpenAI = None
+
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    print("⚠️ LangChain HuggingFace not available")
+    HuggingFaceEmbeddings = None
 import json
 import re
 
@@ -30,7 +61,7 @@ except ImportError:
 class ResumeIngestPipeline:
     """Resume Ingestion Pipeline - Adds resumes to vector database with no-duplicate functionality"""
     
-    def __init__(self, persist_directory=None, enable_llm_parsing=True):
+    def __init__(self, persist_directory=None, enable_llm_parsing=True, collection_name=None):
         # Use shared configuration if available
         if SHARED_CONFIG_AVAILABLE:
             self.config = get_config()
@@ -42,20 +73,39 @@ class ResumeIngestPipeline:
             print(f"📁 Database path: {self.persist_directory}")
         
         self.enable_llm_parsing = enable_llm_parsing
+        self.collection_name = collection_name  # Store collection name for use in ChromaDB factory
+        
+        if collection_name:
+            print(f"📂 Target collection: {collection_name}")
         
         # Create embeddings using shared configuration if available
         if SHARED_CONFIG_AVAILABLE:
             embedding_config = get_embedding_config()
             print(f"🔧 Loading embedding model: {embedding_config['model_name']}")
-            self.embedding = HuggingFaceEmbeddings(**embedding_config)
+            # Use ChromaDB factory for embeddings to ensure consistency
+            try:
+                import sys
+                sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from chromadb_factory import get_embedding_function
+                self.embedding = get_embedding_function()
+                print("✅ Local embedding model loaded successfully")
+            except Exception as e:
+                print(f"⚠️ ChromaDB factory embedding failed: {e}")
+                if HuggingFaceEmbeddings:
+                    self.embedding = HuggingFaceEmbeddings(**embedding_config)
+                else:
+                    raise ImportError("No embedding model available")
         else:
             # Fallback to original configuration
             print("🔧 Initializing all-MiniLM-L6-v2 embedding model...")
-            self.embedding = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
+            if HuggingFaceEmbeddings:
+                self.embedding = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    model_kwargs={'device': 'cpu'},
+                    encode_kwargs={'normalize_embeddings': True}
+                )
+            else:
+                raise ImportError("No embedding model available")
         print("✅ Local embedding model loaded successfully")
         
         # Initialize LLM for parsing assistance if enabled
@@ -91,42 +141,47 @@ class ResumeIngestPipeline:
         self._init_database()
     
     def _init_database(self):
-        """Initialize vector database"""
+        """Initialize vector database using ChromaDB factory"""
         try:
-            # Check if the specific ChromaDB SQLite file exists
-            chroma_db_file = os.path.join(self.persist_directory, "chroma.sqlite3")
+            # Import the factory
+            import sys
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from chromadb_factory import get_chromadb_instance, cleanup_chromadb_instances
             
-            if os.path.exists(chroma_db_file):
-                # SQLite database file exists, load existing database
-                self.db = Chroma(
-                    persist_directory=self.persist_directory,
-                    embedding_function=self.embedding
-                )
-                print(f"✅ Found existing ChromaDB SQLite file: {chroma_db_file}")
-                print("📂 Loaded existing resume database")
-                self._load_existing_resume_ids()
-            elif os.path.exists(self.persist_directory):
-                # Directory exists but no SQLite file, might be empty or corrupted
-                print(f"⚠️  Directory exists but no ChromaDB SQLite file found at: {chroma_db_file}")
-                print("🔄 Attempting to load existing database...")
-                self.db = Chroma(
-                    persist_directory=self.persist_directory,
-                    embedding_function=self.embedding
-                )
-                print("📂 Loaded existing resume database")
-                self._load_existing_resume_ids()
-            else:
-                # Neither directory nor SQLite file exists, create new
-                print(f"🆕 Creating new ChromaDB at: {self.persist_directory}")
-                self.db = Chroma(
-                    embedding_function=self.embedding,
-                    persist_directory=self.persist_directory
-                )
-                print("📂 Created new resume database")
+            # Use the factory to get a consistent ChromaDB instance with collection support
+            self.db = get_chromadb_instance(
+                persist_directory=self.persist_directory,
+                collection_name=self.collection_name
+            )
+            
+            print("📂 Database initialized successfully")
+            self._load_existing_resume_ids()
                 
         except Exception as e:
             print(f"❌ Error initializing database: {e}")
-            raise
+            
+            # Check if it's a ChromaDB conflict error
+            if "different settings" in str(e).lower() or "already exists" in str(e).lower():
+                print("🔄 Attempting to resolve ChromaDB conflict...")
+                try:
+                    # Force cleanup and retry
+                    cleanup_chromadb_instances()
+                    
+                    # Retry with force_new flag
+                    self.db = get_chromadb_instance(
+                        persist_directory=self.persist_directory,
+                        collection_name=self.collection_name,
+                        force_new=True
+                    )
+                    
+                    print("✅ Successfully resolved ChromaDB conflict")
+                    self._load_existing_resume_ids()
+                    
+                except Exception as retry_error:
+                    print(f"❌ Failed to resolve ChromaDB conflict: {retry_error}")
+                    raise Exception(f"ChromaDB initialization failed. Original error: {e}. Retry error: {retry_error}")
+            else:
+                raise
     
     def _load_existing_resume_ids(self):
         """Load existing resume IDs to prevent duplicates"""
@@ -212,6 +267,13 @@ class ResumeIngestPipeline:
         elif file_path.endswith('.docx'):
             loader = Docx2txtLoader(file_path)
             return loader.load()
+        elif file_path.endswith('.txt'):
+            # Handle text files directly
+            with open(file_path, 'r', encoding='utf-8') as file:
+                content = file.read()
+                # Create a Document object similar to what the loaders return
+                from langchain_core.documents import Document
+                return [Document(page_content=content, metadata={"source": file_path})]
         else:
             raise ValueError(f"Unsupported file format: {file_path}")
     
@@ -221,6 +283,7 @@ class ResumeIngestPipeline:
             return {}
         
         try:
+            print(f"🤖 Analyzing resume content with LLM...")
             extraction_prompt = """
             Analyze the following resume content and extract key information in JSON format.
             
@@ -240,11 +303,51 @@ class ResumeIngestPipeline:
             {content}
             """
             
-            response = self.llm.invoke(extraction_prompt.format(content=content[:4000]))  # Limit content length
+            # Add timeout handling for LLM call using threading
+            import threading
+            import time
+            
+            result_container = {'response': None, 'error': None}
+            
+            def llm_call():
+                try:
+                    result_container['response'] = self.llm.invoke(extraction_prompt.format(content=content[:4000]))
+                except Exception as e:
+                    result_container['error'] = str(e)
+            
+            # Start LLM call in separate thread
+            thread = threading.Thread(target=llm_call)
+            thread.daemon = True
+            thread.start()
+            thread.join(timeout=30)  # 30 second timeout
+            
+            if thread.is_alive():
+                print(f"⚠️ LLM processing timed out after 30 seconds, using fallback data")
+                return {
+                    "candidate_name": "Unknown",
+                    "experience_years": 0,
+                    "key_skills": []
+                }
+            
+            if result_container['error']:
+                print(f"❌ LLM processing error: {result_container['error']}")
+                return {
+                    "candidate_name": "Unknown",
+                    "experience_years": 0,
+                    "key_skills": []
+                }
+            
+            response = result_container['response']
+            if not response:
+                print(f"⚠️ No LLM response received")
+                return {}
+            
+            print(f"✅ LLM processing completed")
             
             # Parse the JSON response
             try:
                 extracted_data = json.loads(response.content)
+                print(f"📊 Extracted: {extracted_data.get('candidate_name', 'Unknown')}, {len(extracted_data.get('key_skills', []))} skills, {extracted_data.get('experience_years', 0)} years experience")
                 return extracted_data
             except json.JSONDecodeError:
                 # Try to extract JSON from the response if it's wrapped in other text
@@ -606,6 +709,7 @@ def main():
     parser = argparse.ArgumentParser(description='Resume Ingestion Pipeline - Add resumes to vector database')
     parser.add_argument('--file', '-f', help='Path to resume file to add')
     parser.add_argument('--directory', '-d', help='Directory containing resume files to add')
+    parser.add_argument('--collection', '-c', help='Collection name to upload documents to (default: uses default collection)')
     parser.add_argument('--list', '-l', action='store_true', help='List all resumes in database')
     parser.add_argument('--stats', '-s', action='store_true', help='Show database statistics')
     parser.add_argument('--force-update', action='store_true', help='Force update existing resumes')
@@ -622,7 +726,8 @@ def main():
     # Initialize pipeline
     pipeline = ResumeIngestPipeline(
         persist_directory=args.db_path,
-        enable_llm_parsing=not args.no_llm
+        enable_llm_parsing=not args.no_llm,
+        collection_name=args.collection
     )
     
     # Handle different operations
