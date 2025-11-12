@@ -188,7 +188,7 @@
                             </div>
                             <div class="col-md-3">
                                 <i class="fas fa-file-alt fa-2x mb-2"></i>
-                                <h4 id="totalDocuments">{{ stats.total_items if stats else 0 }}</h4>
+                                <h4 id="totalDocuments">{{ stats.total_documents if stats else 0 }}</h4>
                                 <p>Total Documents</p>
                             </div>
                             <div class="col-md-3">
@@ -238,13 +238,13 @@
                                                         {{ collection.name }}
                                                     </h6>
                                                     <span class="badge bg-{{ 'success' if collection.has_data else 'secondary' }}">
-                                                        {{ collection.count }} items
+                                                        {{ collection.count }} document{{ 's' if collection.count != 1 else '' }}
                                                     </span>
                                                 </div>
                                                 
                                                 {% if collection.sample_data %}
                                                 <p class="card-text small text-muted mb-3" style="max-height: 60px; overflow: hidden;">
-                                                    {{ collection.sample_data }}
+                                                    <i class="fas fa-chart-bar text-info"></i> {{ collection.sample_data }}
                                                 </p>
                                                 {% else %}
                                                 <p class="card-text small text-muted mb-3">
@@ -533,8 +533,8 @@
             
             let html = `
                 <div class="mb-3">
-                    <strong>Total Documents:</strong> ${data.total_count} 
-                    <span class="text-muted">(showing ${data.shown_count})</span>
+                    <strong>Total Documents:</strong> ${data.total_documents} 
+                    <span class="text-muted">(${data.total_count} chunks, showing ${data.shown_count})</span>
                 </div>
             `;
             

@@ -383,7 +383,7 @@
         function updateStats(stats) {
             if (stats && !stats.error) {
                 document.getElementById('totalCollections').textContent = stats.total_collections || 0;
-                document.getElementById('totalDocuments').textContent = stats.total_items || 0;
+                document.getElementById('totalDocuments').textContent = stats.total_documents || 0;
                 document.getElementById('databaseSize').textContent = stats.database_size || 'Unknown';
                 document.getElementById('lastUpdated').textContent = stats.last_updated ? 
                     new Date(stats.last_updated).toLocaleDateString() : 'Never';

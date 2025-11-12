@@ -61,7 +61,9 @@ except ImportError:
 class ResumeIngestPipeline:
     """Resume Ingestion Pipeline - Adds resumes to vector database with no-duplicate functionality"""
     
-    def __init__(self, persist_directory=None, enable_llm_parsing=True, collection_name=None):
+    def __init__(self, persist_directory=None, enable_llm_parsing=True, collection_name=None, use_existing_db=None):
+        self.use_existing_db = use_existing_db  # Store existing connection info
+        
         # Use shared configuration if available
         if SHARED_CONFIG_AVAILABLE:
             self.config = get_config()
@@ -109,29 +111,52 @@ class ResumeIngestPipeline:
         print("✅ Local embedding model loaded successfully")
         
         # Initialize LLM for parsing assistance if enabled
+        self.llm = None  # Initialize to None first
         if self.enable_llm_parsing:
             try:
                 if SHARED_CONFIG_AVAILABLE:
                     azure_config = get_azure_llm_config()
                     print(f"🔧 Connecting to Azure OpenAI: {azure_config['azure_endpoint']}")
-                    self.llm = AzureChatOpenAI(**azure_config)
+                    if AzureChatOpenAI is not None:
+                        self.llm = AzureChatOpenAI(**azure_config)
+                        print("🤖 LLM-assisted parsing enabled")
+                    else:
+                        print("⚠️ AzureChatOpenAI not available, disabling LLM parsing")
+                        self.enable_llm_parsing = False
                 else:
                     # Fallback to original configuration
-                    self.llm = AzureChatOpenAI(
-                        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-                        api_key=os.getenv("AZURE_OPENAI_KEY"),
-                        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                        deployment_name=os.getenv("AZURE_OPENAI_CHATGPT_DEPLOYMENT"),
-                        temperature=0.1,  # Low temperature for consistent parsing
-                        model_kwargs={
-                            "extra_headers": {
-                                "ms-azure-ai-chat-enhancements-disable-search": "true"
+                    if AzureChatOpenAI is not None:
+                        self.llm = AzureChatOpenAI(
+                            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                            api_key=os.getenv("AZURE_OPENAI_KEY"),
+                            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                            deployment_name=os.getenv("AZURE_OPENAI_CHATGPT_DEPLOYMENT"),
+                            temperature=0.1,  # Low temperature for consistent parsing
+                            model_kwargs={
+                                "extra_headers": {
+                                    "ms-azure-ai-chat-enhancements-disable-search": "true"
+                                }
                             }
-                        }
-                    )
-                print("🤖 LLM-assisted parsing enabled")
+                        )
+                        print("🤖 LLM-assisted parsing enabled")
+                    else:
+                        print("⚠️ AzureChatOpenAI not available, disabling LLM parsing")
+                        self.enable_llm_parsing = False
+                        
+                # Test the LLM connection with a simple call
+                if self.llm is not None:
+                    try:
+                        test_response = self.llm.invoke("Test connection. Reply with: OK")
+                        print("✅ LLM connection test successful")
+                    except Exception as test_error:
+                        print(f"⚠️ LLM connection test failed: {test_error}")
+                        print("🔄 Disabling LLM parsing for this session")
+                        self.llm = None
+                        self.enable_llm_parsing = False
+                        
             except Exception as e:
                 print(f"⚠️ Could not initialize LLM, falling back to basic parsing: {e}")
+                self.llm = None
                 self.enable_llm_parsing = False
         
         # Track processed resumes to prevent duplicates
@@ -141,8 +166,58 @@ class ResumeIngestPipeline:
         self._init_database()
     
     def _init_database(self):
-        """Initialize vector database using ChromaDB factory"""
+        """Initialize vector database using ChromaDB factory or existing connection"""
         try:
+            # Check if we have an existing connection to reuse
+            if self.use_existing_db:
+                print("🔄 Attempting to reuse existing ChromaDB connection...")
+                
+                # Create a simple wrapper around the existing connection
+                class ExistingDBWrapper:
+                    def __init__(self, existing_connection, collection_name):
+                        self.client = existing_connection['client']
+                        self.collection_name = collection_name or 'default'
+                        
+                        # Get or create collection
+                        try:
+                            self.collection = self.client.get_collection(self.collection_name)
+                            print(f"📂 Using existing collection: {self.collection_name}")
+                        except:
+                            self.collection = self.client.create_collection(
+                                name=self.collection_name,
+                                metadata={"hnsw:space": "cosine"}
+                            )
+                            print(f"🆕 Created new collection: {self.collection_name}")
+                    
+                    def add_documents(self, documents):
+                        """Add documents to the collection"""
+                        for i, doc in enumerate(documents):
+                            doc_id = f"{doc.metadata.get('Resume_ID', 'doc')}_{i}"
+                            self.collection.add(
+                                ids=[doc_id],
+                                documents=[doc.page_content],
+                                metadatas=[doc.metadata]
+                            )
+                    
+                    def similarity_search(self, query, k=4):
+                        """Simple similarity search"""
+                        results = self.collection.query(
+                            query_texts=[query],
+                            n_results=k
+                        )
+                        
+                        # Convert to simple document format
+                        docs = []
+                        for i, (doc, metadata) in enumerate(zip(results['documents'][0], results['metadatas'][0])):
+                            docs.append(type('Document', (), {'page_content': doc, 'metadata': metadata})())
+                        return docs
+                
+                self.db = ExistingDBWrapper(self.use_existing_db, self.collection_name)
+                print("✅ Successfully reused existing ChromaDB connection")
+                self._load_existing_resume_ids()
+                return
+            
+            # Fall back to creating new connection via factory
             # Import the factory
             import sys
             sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -279,8 +354,12 @@ class ResumeIngestPipeline:
     
     def _extract_resume_structure(self, content):
         """Use LLM to extract structured information from resume content"""
-        if not self.enable_llm_parsing:
-            return {}
+        if not self.enable_llm_parsing or not hasattr(self, 'llm') or self.llm is None:
+            return {
+                "candidate_name": "Unknown",
+                "experience_years": 0,
+                "key_skills": []
+            }
         
         try:
             print(f"🤖 Analyzing resume content with LLM...")
@@ -311,7 +390,10 @@ class ResumeIngestPipeline:
             
             def llm_call():
                 try:
-                    result_container['response'] = self.llm.invoke(extraction_prompt.format(content=content[:4000]))
+                    if self.llm is not None:
+                        result_container['response'] = self.llm.invoke(extraction_prompt.format(content=content[:4000]))
+                    else:
+                        result_container['error'] = "LLM is None"
                 except Exception as e:
                     result_container['error'] = str(e)
             
@@ -340,7 +422,11 @@ class ResumeIngestPipeline:
             response = result_container['response']
             if not response:
                 print(f"⚠️ No LLM response received")
-                return {}
+                return {
+                    "candidate_name": "Unknown",
+                    "experience_years": 0,
+                    "key_skills": []
+                }
             
             print(f"✅ LLM processing completed")
             
@@ -357,15 +443,23 @@ class ResumeIngestPipeline:
                     return extracted_data
                 else:
                     print("⚠️ Could not parse LLM response as JSON")
-                    return {}
+                    return {
+                        "candidate_name": "Unknown",
+                        "experience_years": 0,
+                        "key_skills": []
+                    }
                     
         except Exception as e:
             print(f"⚠️ Error in LLM content extraction: {e}")
-            return {}
+            return {
+                "candidate_name": "Unknown",
+                "experience_years": 0,
+                "key_skills": []
+            }
     
     def _identify_resume_sections(self, content):
         """Use LLM to identify logical sections in the resume for better chunking"""
-        if not self.enable_llm_parsing:
+        if not self.enable_llm_parsing or not hasattr(self, 'llm') or self.llm is None:
             return []
         
         try:
@@ -382,6 +476,10 @@ class ResumeIngestPipeline:
             Resume Content:
             {content}
             """
+            
+            if self.llm is None:
+                print("⚠️ LLM not available for section identification")
+                return []
             
             response = self.llm.invoke(section_prompt.format(content=content[:3000]))
             
@@ -578,16 +676,30 @@ class ResumeIngestPipeline:
             
             # Extract structured information using LLM
             extracted_info = {}
-            if self.enable_llm_parsing and documents:
+            if self.enable_llm_parsing and hasattr(self, 'llm') and self.llm is not None and documents:
                 full_content = "\n".join([doc.page_content for doc in documents])
                 print("   🤖 Analyzing resume content with LLM...")
                 extracted_info = self._extract_resume_structure(full_content)
                 
-                if extracted_info:
+                if extracted_info and isinstance(extracted_info, dict):
                     candidate_name = extracted_info.get('candidate_name', 'Unknown')
                     skills_count = len(extracted_info.get('key_skills', []))
                     exp_years = extracted_info.get('experience_years', 0)
                     print(f"   📊 Extracted: {candidate_name}, {skills_count} skills, {exp_years} years experience")
+                else:
+                    print("   ⚠️ No structured data extracted, using basic processing")
+            elif self.enable_llm_parsing and (not hasattr(self, 'llm') or self.llm is None):
+                print("   ⚠️ LLM not available, using basic processing")
+            else:
+                print("   📝 Using basic processing (LLM disabled)")
+                
+            # Always provide fallback data structure
+            if not extracted_info or not isinstance(extracted_info, dict):
+                extracted_info = {
+                    "candidate_name": "Unknown",
+                    "experience_years": 0,
+                    "key_skills": []
+                }
             
             # Generate metadata with extracted information
             file_metadata, resume_id = self._create_resume_metadata(file_path, extracted_info)
@@ -625,7 +737,10 @@ class ResumeIngestPipeline:
             return True, resume_id, len(docs)
             
         except Exception as e:
-            print(f"Error processing {file_path}: {e}")
+            print(f"❌ DETAILED ERROR processing {file_path}: {str(e)}")
+            print(f"❌ ERROR TYPE: {type(e).__name__}")
+            import traceback
+            print(f"❌ FULL TRACEBACK: {traceback.format_exc()}")
             return False, None, 0
     
     def add_directory(self, directory_path, force_update=False):

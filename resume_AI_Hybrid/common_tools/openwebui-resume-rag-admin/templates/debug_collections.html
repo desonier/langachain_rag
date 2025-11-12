@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Collection Data Test</title>
+</head>
+<body>
+    <h1>Testing Collection Template Rendering</h1>
+    
+    <!-- Test data structure -->
+    <div class="collection-test">
+        {% if collections %}
+            {% for collection in collections %}
+            <div class="collection-card">
+                <h3>{{ collection.name }}</h3>
+                <p>Count: {{ collection.count }}</p>
+                <p>Sample Data: {{ collection.sample_data }}</p>
+                <p>Has Data: {{ collection.has_data }}</p>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p>No collections found</p>
+        {% endif %}
+    </div>
+    
+    <!-- Raw collections data for debugging -->
+    <div class="debug-data">
+        <h3>Raw Collections Data:</h3>
+        <pre>{{ collections }}</pre>
+    </div>
+</body>
+</html>

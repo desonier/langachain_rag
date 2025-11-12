@@ -1,6 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import sys
 import os
+import signal
+import atexit
 from pathlib import Path
 
 # Add current directory to Python path
@@ -33,13 +35,168 @@ app = Flask(__name__, template_folder='../templates', static_folder='../static')
 # Use environment variable for secret key or default
 app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
+def validate_existing_database():
+    """
+    Check if database exists and validate it can be properly initialized
+    Returns: (exists, can_connect, error_message)
+    """
+    try:
+        # Add path to import shared config
+        sys.path.append(str(current_dir.parent.parent.parent))
+        
+        # Check if shared config is available and get DB path
+        try:
+            from shared_config import get_vector_db_path
+            db_path = Path(get_vector_db_path())
+        except ImportError:
+            # Fallback path
+            db_path = Path(r"C:\Users\DamonDesonier\repos\langachain_rag\resume_AI_Hybrid\resume_vectordb")
+        
+        print(f"🔍 Checking for existing database at: {db_path}")
+        
+        # Check if database directory and files exist
+        if not db_path.exists():
+            print("📂 No existing database found")
+            return False, True, None  # No database exists, connection would be fine
+        
+        # Check for ChromaDB database file
+        chroma_db_file = db_path / "chroma.sqlite3"
+        if not chroma_db_file.exists():
+            print("📂 Database directory exists but no ChromaDB files found")
+            return False, True, None
+        
+        print("✅ Existing database found, testing connection...")
+        
+        # Test database connection
+        try:
+            import chromadb
+            from chromadb.config import Settings
+            
+            # Use consistent settings that match the admin
+            settings = Settings(
+                anonymized_telemetry=False,
+                allow_reset=True,
+                is_persistent=True
+            )
+            
+            # Test connection
+            test_client = chromadb.PersistentClient(path=str(db_path), settings=settings)
+            
+            # Test basic operations
+            collections = test_client.list_collections()
+            print(f"✅ Database connection successful. Found {len(collections)} collections.")
+            
+            # Clean up test connection
+            del test_client
+            
+            return True, True, None
+            
+        except Exception as db_error:
+            error_msg = f"Database found but failed to connect: {str(db_error)}"
+            print(f"❌ {error_msg}")
+            return True, False, error_msg
+            
+    except Exception as e:
+        error_msg = f"Error during database validation: {str(e)}"
+        print(f"❌ {error_msg}")
+        return False, False, error_msg
+
+def show_database_error_popup(error_message):
+    """Show database error in both console and attempt to show system notification"""
+    print("\n" + "="*60)
+    print("🚨 DATABASE INITIALIZATION ERROR")
+    print("="*60)
+    print(f"❌ {error_message}")
+    print("="*60)
+    print("Recommendations:")
+    print("1. Check if another ChromaDB instance is running")
+    print("2. Restart the application")
+    print("3. Check database file permissions")
+    print("4. Consider backing up and recreating the database")
+    print("="*60 + "\n")
+    
+    # Try to show Windows notification (optional, won't fail if not available)
+    try:
+        import subprocess
+        subprocess.run([
+            'powershell', '-Command',
+            f'[System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms"); '
+            f'[System.Windows.Forms.MessageBox]::Show("{error_message}", "Database Error", "OK", "Error")'
+        ], capture_output=True, timeout=5)
+    except:
+        pass  # Notification failed, but continue anyway
+
+# Validate existing database before initializing admin
+print("🚀 Starting ChromaDB Admin Interface...")
+db_exists, can_connect, error_msg = validate_existing_database()
+
+# Store validation results globally
+startup_db_validation = {
+    'db_exists': db_exists,
+    'can_connect': can_connect, 
+    'error_message': error_msg,
+    'validation_time': None
+}
+
+if db_exists and not can_connect:
+    show_database_error_popup(error_msg)
+    print("⚠️ Continuing with limited functionality...")
+
+def startup_banner():
+    """Display startup status banner"""
+    print("\n" + "="*60)
+    print("🚀 ChromaDB Admin Interface")
+    print("="*60)
+    
+    if startup_db_validation['db_exists']:
+        print(f"📂 Database Status: Found existing database")
+        if startup_db_validation['can_connect']:
+            print(f"✅ Connection Test: Successful")
+        else:
+            print(f"❌ Connection Test: Failed")
+            print(f"   Error: {startup_db_validation['error_message']}")
+    else:
+        print(f"📂 Database Status: No existing database (will create on first use)")
+    
+    if chromadb_admin:
+        print(f"✅ Admin Status: Initialized successfully")
+    else:
+        print(f"❌ Admin Status: Failed to initialize")
+        if startup_db_validation['error_message']:
+            print(f"   Error: {startup_db_validation['error_message']}")
+    
+    print("="*60)
+    print("📊 Dashboard: http://localhost:5001")
+    print("🗂️ Collections: http://localhost:5001/admin/collections")
+    print("📈 Statistics: http://localhost:5001/admin/stats")
+    print("🛠️ Database: http://localhost:5001/admin/database")
+    print("💡 Press Ctrl+C to gracefully shutdown")
+    print("="*60 + "\n")
+
 # Initialize ChromaDBAdmin with error handling
 try:
     chromadb_admin = ChromaDBAdmin()
     print("✅ ChromaDBAdmin initialized successfully")
+    startup_db_validation['validation_time'] = "Startup validation completed"
+    
+    # If database validation failed but admin initialized, warn user
+    if db_exists and not can_connect:
+        print("⚠️ Database connection issues detected but admin initialized")
+        print("   Some features may not work properly")
+        
 except Exception as e:
     print(f"❌ Failed to initialize ChromaDBAdmin: {e}")
     chromadb_admin = None
+    startup_db_validation['error_message'] = f"ChromaDBAdmin initialization failed: {e}"
+    
+    # Show error popup if admin initialization also failed
+    if db_exists:
+        show_database_error_popup(f"ChromaDBAdmin initialization failed: {e}")
+    else:
+        print("ℹ️  No existing database found - will create new one on first use")
+
+# Display startup banner
+startup_banner()
 
 @app.route('/')
 def index():
@@ -49,9 +206,37 @@ def index():
 @app.route('/admin')
 def admin_dashboard():
     """Main admin dashboard"""
+    database_status = {
+        'initialized': chromadb_admin is not None,
+        'has_connection_issues': False,
+        'error_message': None,
+        'startup_validation': startup_db_validation
+    }
+    
+    # Check startup validation results
+    if startup_db_validation['db_exists'] and not startup_db_validation['can_connect']:
+        database_status['has_connection_issues'] = True
+        database_status['error_message'] = startup_db_validation['error_message']
+        flash(f"Database startup validation failed: {startup_db_validation['error_message']}", "error")
+    
     if not chromadb_admin:
         flash("ChromaDB Admin not initialized. Please check your configuration.", "error")
-    return render_template('admin_dashboard.html')
+        if not database_status['error_message']:
+            database_status['error_message'] = "ChromaDB Admin not initialized"
+    else:
+        # Test current connection health
+        try:
+            health_check = chromadb_admin.health_check()
+            if not health_check.get('healthy', False):
+                database_status['has_connection_issues'] = True
+                database_status['error_message'] = health_check.get('error', 'Unknown connection issue')
+                flash(f"Database connection issues detected: {database_status['error_message']}", "warning")
+        except Exception as e:
+            database_status['has_connection_issues'] = True
+            database_status['error_message'] = str(e)
+            flash(f"Database health check failed: {e}", "error")
+    
+    return render_template('admin_dashboard.html', database_status=database_status)
 
 @app.route('/admin/database', methods=['GET', 'POST'])
 def manage_database():
@@ -124,6 +309,8 @@ def manage_collections():
     
     # Get collections and statistics with error handling
     try:
+        # Refresh client to ensure we see the latest data
+        chromadb_admin.refresh_client()
         collections = chromadb_admin.list_collections()
     except Exception as e:
         collections = []
@@ -139,6 +326,18 @@ def manage_collections():
                          collections=collections, 
                          stats=stats,
                          result=result)
+
+@app.route('/debug/collections')
+def debug_collections_template():
+    """Debug endpoint to test collection template rendering"""
+    if not chromadb_admin:
+        return "ChromaDB Admin not available"
+    
+    try:
+        collections = chromadb_admin.list_collections()
+        return render_template('debug_collections.html', collections=collections)
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 @app.route('/admin/collections/<collection_name>/contents')
 def view_collection_contents(collection_name):
@@ -186,6 +385,8 @@ def api_database_status():
         })
     
     try:
+        # Force refresh to get latest data
+        chromadb_admin.refresh_client()
         stats = chromadb_admin.get_statistics()
         return jsonify({
             "success": True,
@@ -278,6 +479,8 @@ def api_database_stats():
         return jsonify({"success": False, "error": "ChromaDB Admin not available"}), 500
     
     try:
+        # Refresh client to ensure we get current stats
+        chromadb_admin.refresh_client()
         result = chromadb_admin.get_statistics()
         return jsonify(result)
     except Exception as e:
@@ -291,6 +494,8 @@ def api_list_collections():
         return jsonify({"success": False, "error": "ChromaDB Admin not available"}), 500
     
     try:
+        # Refresh client to ensure we get current collections
+        chromadb_admin.refresh_client()
         collections = chromadb_admin.list_collections()
         return jsonify({
             "success": True,
@@ -379,6 +584,19 @@ def bulk_upload(collection_name):
         
         # Import and initialize the ingest pipeline
         sys.path.append(str(current_dir.parent.parent))
+        
+        # Force cleanup of existing ChromaDB instances before creating pipeline
+        try:
+            from chromadb_factory import cleanup_chromadb_instances
+            cleanup_chromadb_instances()
+            print("🧹 Cleared existing ChromaDB instances before file upload")
+            
+            # Brief pause to allow cleanup
+            import time
+            time.sleep(0.5)
+        except Exception as cleanup_error:
+            print(f"⚠️ ChromaDB cleanup warning: {cleanup_error}")
+        
         from ingest_pipeline import ResumeIngestPipeline
         
         # Initialize pipeline with specific collection
@@ -416,9 +634,9 @@ def bulk_upload(collection_name):
                     })
         
         if success_count > 0:
-            flash(f"Successfully uploaded {success_count} files to collection '{collection_name}'", "success")
+            flash(f"Successfully uploaded {success_count} resume(s) to collection '{collection_name}'", "success")
         if error_count > 0:
-            flash(f"{error_count} files failed to upload", "warning")
+            flash(f"{error_count} resume(s) failed to upload", "warning")
         
         return render_template('bulk_upload_results.html', 
                              collection_name=collection_name,
@@ -469,6 +687,18 @@ def api_bulk_upload(collection_name):
             sys.path.append(str(current_dir.parent.parent))
             print(f"🔍 Trying to import ResumeIngestPipeline...")
             
+            # Force cleanup of existing ChromaDB instances before creating pipeline
+            try:
+                from chromadb_factory import cleanup_chromadb_instances
+                cleanup_chromadb_instances()
+                print("🧹 Cleared existing ChromaDB instances before directory upload")
+                
+                # Brief pause to allow cleanup
+                import time
+                time.sleep(0.5)
+            except Exception as cleanup_error:
+                print(f"⚠️ ChromaDB cleanup warning: {cleanup_error}")
+            
             try:
                 from ingest_pipeline import ResumeIngestPipeline
                 print(f"🔍 Successfully imported ResumeIngestPipeline")
@@ -492,12 +722,14 @@ def api_bulk_upload(collection_name):
                     print(f"🔍 Processing file {processed_count + 1}/{len(supported_files)}: {file_path.name}")
                     success, resume_id, chunks_added = pipeline.add_resume(str(file_path))
                     print(f"✅ Result: success={success}, resume_id={resume_id}, chunks={chunks_added}")
+                    print(f"📊 Resume processed: {file_path.name} ({'✅ SUCCESS' if success else '❌ FAILED'})")
                     
                     results.append({
                         'file': file_path.name,
                         'success': success,
                         'chunks': chunks_added,
                         'resume_id': resume_id,
+                        'resume_count': 1 if success else 0,  # Always 1 resume per file
                         'error': None if success else "Failed to process file"
                     })
                     processed_count += 1
@@ -508,17 +740,35 @@ def api_bulk_upload(collection_name):
                         'file': file_path.name,
                         'success': False,
                         'chunks': 0,
+                        'resume_count': 0,  # Failed upload = 0 resumes
                         'error': str(file_error)
                     })
                     processed_count += 1
             
             success_count = sum(1 for r in results if r['success'])
+            
+            # Refresh ChromaDB client to ensure new data is visible
+            if success_count > 0:
+                print("🔄 Refreshing ChromaDB client to show new data...")
+                chromadb_admin.refresh_client()
+            
+            # Print upload summary for directory
+            print(f"\n📈 DIRECTORY UPLOAD SUMMARY:")
+            print(f"   📊 Total resumes processed: {len(results)}")
+            print(f"   ✅ Successful uploads: {success_count}")
+            print(f"   ❌ Failed uploads: {len(results) - success_count}")
+            print(f"   📦 Total chunks created: {sum(r.get('chunks', 0) for r in results)}")
+            print(f"   📁 Collection: {collection_name}")
+            print(f"   📂 Source directory: {upload_directory}\n")
+            
             return jsonify({
                 "success": True,
-                "message": f"Processed {len(results)} files, {success_count} successful",
+                "message": f"Processed {len(results)} resume(s), {success_count} successful",
                 "results": results,
                 "success_count": success_count,
-                "error_count": len(results) - success_count
+                "error_count": len(results) - success_count,
+                "resume_count": success_count,  # Clear resume count
+                "total_chunks": sum(r.get('chunks', 0) for r in results)  # Total chunks for reference
             })
         
         elif upload_type == 'files':
@@ -527,10 +777,52 @@ def api_bulk_upload(collection_name):
             if not uploaded_files:
                 return jsonify({"error": "No files uploaded"}), 400
             
+            # Use existing ChromaDB connection with pipeline to avoid conflicts
+            if not chromadb_admin:
+                return jsonify({"error": "ChromaDB admin not initialized"}), 500
+            
+            # Import the pipeline but use existing connection
             sys.path.append(str(current_dir.parent.parent))
             from ingest_pipeline import ResumeIngestPipeline
             
-            pipeline = ResumeIngestPipeline(collection_name=collection_name)
+            # Create pipeline with existing database connection
+            try:
+                # Get the existing database from admin
+                existing_db = chromadb_admin.get_existing_db_connection()
+                
+                if existing_db:
+                    # Create pipeline with existing connection
+                    pipeline = ResumeIngestPipeline(
+                        collection_name=collection_name, 
+                        persist_directory=str(chromadb_admin.db_path),
+                        use_existing_db=existing_db
+                    )
+                    print("✅ Using existing ChromaDB connection for pipeline")
+                else:
+                    raise Exception("Could not get existing database connection")
+                    
+            except Exception as e:
+                print(f"⚠️ Could not reuse connection: {e}")
+                print("🧹 Cleaning up connections before creating new pipeline...")
+                
+                # Force cleanup of all connections before creating new one
+                try:
+                    from chromadb_factory import cleanup_chromadb_instances
+                    cleanup_chromadb_instances()
+                    
+                    # Also refresh admin client to clear its connection
+                    chromadb_admin.refresh_client()
+                    
+                    # Brief pause to allow cleanup
+                    import time
+                    time.sleep(1.0)
+                    print("✅ Cleanup completed, creating new pipeline...")
+                except Exception as cleanup_error:
+                    print(f"⚠️ Cleanup warning: {cleanup_error}")
+                
+                # Now create new pipeline
+                pipeline = ResumeIngestPipeline(collection_name=collection_name)
+                
             results = []
             
             # Create temporary directory for uploaded files
@@ -548,25 +840,52 @@ def api_bulk_upload(collection_name):
                             print(f"🔍 Processing uploaded file: {file.filename}")
                             success, resume_id, chunks_added = pipeline.add_resume(str(file_path), original_filename=file.filename)
                             print(f"✅ Result: success={success}, resume_id={resume_id}, chunks={chunks_added}")
+                            print(f"📊 Resume uploaded: {file.filename} ({'✅ SUCCESS' if success else '❌ FAILED'})")
                             results.append({
                                 'file': file.filename,
                                 'success': success,
                                 'chunks': chunks_added,
                                 'resume_id': resume_id,
+                                'resume_count': 1 if success else 0,  # Always 1 resume per file
                                 'error': None if success else "Failed to process file"
                             })
-                        except Exception as e:
-                            print(f"❌ Error processing {file.filename}: {str(e)}")
+                        except Exception as file_error:
+                            print(f"❌ DETAILED ERROR processing {file.filename}: {str(file_error)}")
+                            print(f"❌ ERROR TYPE: {type(file_error).__name__}")
                             import traceback
-                            traceback.print_exc()
+                            print(f"❌ FULL TRACEBACK: {traceback.format_exc()}")
                             results.append({
                                 'file': file.filename,
                                 'success': False,
                                 'chunks': 0,
-                                'error': str(e)
+                                'resume_count': 0,  # Failed upload = 0 resumes
+                                'error': f"Error: {str(file_error)}"
                             })
             
             success_count = sum(1 for r in results if r['success'])
+            
+            # Clean up pipeline connections to prevent conflicts
+            try:
+                if hasattr(pipeline, 'db') and pipeline.db:
+                    del pipeline.db
+                del pipeline
+                print("🧹 Cleaned up pipeline connections")
+            except Exception as cleanup_error:
+                print(f"⚠️ Pipeline cleanup warning: {cleanup_error}")
+            
+            # Refresh ChromaDB client to ensure new data is visible
+            if success_count > 0:
+                print("🔄 Refreshing ChromaDB client to show new data...")
+                chromadb_admin.refresh_client()
+            
+            # Print upload summary for files
+            print(f"\n📈 FILE UPLOAD SUMMARY:")
+            print(f"   📊 Total resumes processed: {len(results)}")
+            print(f"   ✅ Successful uploads: {success_count}")
+            print(f"   ❌ Failed uploads: {len(results) - success_count}")
+            print(f"   📦 Total chunks created: {sum(r.get('chunks', 0) for r in results)}")
+            print(f"   📁 Collection: {collection_name}\n")
+            
             return jsonify({
                 "success": True,
                 "message": f"Processed {len(results)} files, {success_count} successful",
@@ -592,9 +911,46 @@ def internal_error(error):
     flash("An internal error occurred. Please try again.", "error")
     return render_template('admin_dashboard.html'), 500
 
-if __name__ == '__main__':
-    print("🚀 Starting ChromaDB Admin Interface...")
+def cleanup_and_exit():
+    """Gracefully cleanup ChromaDB connections on exit"""
+    print("\n🔄 Gracefully shutting down...")
+    try:
+        if chromadb_admin:
+            print("🧹 Cleaning up ChromaDB connections...")
+            # Use the dedicated close method
+            chromadb_admin.close_client()
+        
+        # Also cleanup the factory cached instances
+        try:
+            import sys
+            import os
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from chromadb_factory import cleanup_chromadb_instances
+            cleanup_chromadb_instances()
+        except Exception as e:
+            print(f"⚠️ Factory cleanup error: {e}")
+            
+    except Exception as e:
+        print(f"⚠️ Error during cleanup: {e}")
     
+    # Force garbage collection to clean up any remaining references
+    import gc
+    gc.collect()
+    print("✅ Cleanup completed")
+
+def signal_handler(signum, frame):
+    """Handle interrupt signals (Ctrl+C)"""
+    print(f"\n🛑 Received signal {signum}, initiating graceful shutdown...")
+    cleanup_and_exit()
+    print("👋 Goodbye!")
+    sys.exit(0)
+
+# Register signal handlers and cleanup functions
+signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
+atexit.register(cleanup_and_exit)  # Called on normal exit
+
+if __name__ == '__main__':    
     # Check if templates directory exists
     templates_dir = current_dir.parent / 'templates'
     if not templates_dir.exists():
@@ -602,13 +958,13 @@ if __name__ == '__main__':
         print("Please ensure the templates directory exists with HTML files.")
         sys.exit(1)
     
-    print("📊 Dashboard: http://localhost:5001")
-    print("🗂️ Collections: http://localhost:5001/admin/collections")
-    print("📈 Statistics: http://localhost:5001/admin/stats")
-    print("🛠️ Database: http://localhost:5001/admin/database")
-    
     try:
         app.run(debug=False, port=5001, host='127.0.0.1', use_reloader=False)
+    except KeyboardInterrupt:
+        print("\n🛑 KeyboardInterrupt received")
     except Exception as e:
         print(f"❌ Failed to start Flask app: {e}")
+    finally:
+        # Ensure cleanup happens even if app.run() exits unexpectedly
+        cleanup_and_exit()
         sys.exit(1)

@@ -49,6 +49,55 @@ class ChromaDBAdmin:
         )
         
         self.client = None
+    
+    def _connect(self):
+        """Establish connection to ChromaDB"""
+        if not self.client:
+            try:
+                self.client = chromadb.PersistentClient(
+                    path=str(self.db_path),
+                    settings=self.settings
+                )
+                print(f"🔌 Connected to ChromaDB at: {self.db_path}")
+            except Exception as e:
+                print(f"❌ Failed to connect to ChromaDB: {e}")
+                raise
+        return self.client
+    
+    def get_client(self):
+        """Get or create ChromaDB client"""
+        if not self.client:
+            self._connect()
+        return self.client
+    
+    def refresh_client(self):
+        """Refresh the ChromaDB client connection to pick up new changes"""
+        if self.client:
+            try:
+                # Close existing client
+                del self.client
+            except Exception:
+                pass
+        self.client = None
+        # Next call to get_client() will create a fresh connection
+    
+    def close_client(self):
+        """Properly close the ChromaDB client connection"""
+        if self.client:
+            try:
+                print("🔌 Closing ChromaDB client connection...")
+                del self.client
+                self.client = None
+                print("✅ ChromaDB client connection closed")
+            except Exception as e:
+                print(f"⚠️ Error closing ChromaDB client: {e}")
+        
+    def __del__(self):
+        """Destructor to ensure client is closed"""
+        try:
+            self.close_client()
+        except Exception:
+            pass  # Don't raise exceptions in destructor
         
     def get_client(self):
         """Get ChromaDB client with consistent settings"""
@@ -232,20 +281,36 @@ class ChromaDBAdmin:
             collection_list = []
             for collection in collections:
                 try:
-                    count = collection.count()
+                    count = collection.count()  # Total chunks
                     
-                    # Get sample data if available
-                    sample_data = None
-                    if count > 0:
-                        sample = collection.peek(limit=1)
-                        if sample['documents']:
-                            sample_data = sample['documents'][0][:100] + "..." if len(sample['documents'][0]) > 100 else sample['documents'][0]
+                    # Count unique documents in this collection
+                    unique_documents = 0
+                    try:
+                        all_results = collection.get(include=["metadatas"])
+                        if all_results and all_results.get("metadatas"):
+                            unique_sources = set()
+                            for metadata in all_results["metadatas"]:
+                                if metadata:
+                                    source = metadata.get("original_file_source") or metadata.get("source")
+                                    if source:
+                                        unique_sources.add(source)
+                            unique_documents = len(unique_sources)
+                    except Exception as e:
+                        print(f"⚠️ Error counting unique documents for {collection.name}: {e}")
+                    
+                    # Create collection summary instead of showing raw data
+                    summary_data = None
+                    if unique_documents > 0:
+                        summary_data = f"📊 {unique_documents} document{'s' if unique_documents != 1 else ''} ({count} chunks)"
+                    else:
+                        summary_data = "Empty collection"
                     
                     collection_list.append({
                         "name": collection.name,
-                        "count": count,
-                        "sample_data": sample_data,
-                        "has_data": count > 0
+                        "count": unique_documents,  # Show document count instead of chunk count
+                        "chunk_count": count,  # Keep chunk count for reference
+                        "sample_data": summary_data,
+                        "has_data": unique_documents > 0
                     })
                 except Exception as e:
                     collection_list.append({
@@ -277,6 +342,21 @@ class ChromaDBAdmin:
             # Get collection data
             results = collection.get(limit=limit)
             
+            # Count unique documents in this collection
+            total_documents = 0
+            try:
+                all_results = collection.get(include=["metadatas"])
+                if all_results and all_results.get("metadatas"):
+                    unique_sources = set()
+                    for metadata in all_results["metadatas"]:
+                        if metadata:
+                            source = metadata.get("original_file_source") or metadata.get("source")
+                            if source:
+                                unique_sources.add(source)
+                    total_documents = len(unique_sources)
+            except Exception as e:
+                print(f"⚠️ Error counting unique documents: {e}")
+            
             contents = []
             for i, doc_id in enumerate(results['ids']):
                 content_item = {
@@ -289,7 +369,8 @@ class ChromaDBAdmin:
             return {
                 "success": True,
                 "collection_name": collection_name,
-                "total_count": collection.count(),
+                "total_count": collection.count(),  # Total chunks
+                "total_documents": total_documents,  # Unique documents
                 "shown_count": len(contents),
                 "contents": contents
             }
@@ -304,10 +385,13 @@ class ChromaDBAdmin:
     def get_statistics(self) -> Dict[str, Any]:
         """Get comprehensive database statistics"""
         try:
+            # Refresh client to ensure we get latest data
+            self.refresh_client()
             client = self.get_client()
             collections = client.list_collections()
             
             total_items = 0
+            total_documents = 0  # Count unique documents/resumes
             collection_stats = []
             
             for collection in collections:
@@ -315,22 +399,45 @@ class ChromaDBAdmin:
                     count = collection.count()
                     total_items += count
                     
+                    # Count unique documents by getting unique source files
+                    unique_docs = 0
+                    try:
+                        # Get all items with metadata - using no limit to ensure we get all
+                        results = collection.get(include=["metadatas"])
+                        
+                        if results and results.get("metadatas"):
+                            # Extract unique source files
+                            unique_sources = set()
+                            for metadata in results["metadatas"]:
+                                if metadata:
+                                    # Check for original_file_source first, then fallback to source
+                                    source = metadata.get("original_file_source") or metadata.get("source")
+                                    if source:
+                                        unique_sources.add(source)
+                            unique_docs = len(unique_sources)
+                            total_documents += unique_docs
+                    except Exception as doc_count_error:
+                        print(f"⚠️ Error counting unique documents for {collection.name}: {doc_count_error}")
+                        unique_docs = "Error"
+                    
                     collection_stats.append({
                         "name": collection.name,
-                        "count": count,
+                        "count": count,  # Total chunks
+                        "documents": unique_docs,  # Unique documents/resumes
                         "percentage": 0  # Will calculate after getting total
                     })
                 except Exception as e:
                     collection_stats.append({
                         "name": collection.name,
                         "count": "Error",
+                        "documents": "Error",
                         "error": str(e)
                     })
             
-            # Calculate percentages
+            # Calculate percentages based on document count
             for stat in collection_stats:
-                if isinstance(stat["count"], int) and total_items > 0:
-                    stat["percentage"] = round((stat["count"] / total_items) * 100, 1)
+                if isinstance(stat["documents"], int) and total_documents > 0:
+                    stat["percentage"] = round((stat["documents"] / total_documents) * 100, 1)
             
             # Get database size
             db_size = "Unknown"
@@ -345,7 +452,8 @@ class ChromaDBAdmin:
             return {
                 "database_path": str(self.db_path),
                 "total_collections": len(collections),
-                "total_items": total_items,
+                "total_items": total_items,  # Total chunks
+                "total_documents": total_documents,  # Unique documents/resumes
                 "database_size": db_size,
                 "collections": collection_stats,
                 "last_updated": datetime.now().isoformat()
@@ -518,4 +626,128 @@ class ChromaDBAdmin:
                 "error": str(e),
                 "database_path": str(self.db_path),
                 "timestamp": datetime.now().isoformat()
+            }
+    
+    def get_existing_db_connection(self):
+        """Get the existing database connection for reuse in pipelines"""
+        try:
+            if not self.client:
+                self._connect()
+            
+            # Return a simplified interface that can be used by the pipeline
+            return {
+                'client': self.client,
+                'db_path': str(self.db_path),
+                'settings': self.settings
+            }
+        except Exception as e:
+            print(f"⚠️ Could not get existing DB connection: {e}")
+            return None
+    
+    def health_check(self):
+        """
+        Perform a comprehensive health check of the ChromaDB connection
+        Returns: dict with health status and details
+        """
+        try:
+            # Ensure we have a connection
+            if not self.client:
+                self._connect()
+            
+            # Test basic operations
+            health_status = {
+                'healthy': True,
+                'checks': {},
+                'error': None,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Check 1: List collections
+            try:
+                collections = self.client.list_collections()
+                health_status['checks']['list_collections'] = {
+                    'status': 'pass',
+                    'count': len(collections),
+                    'message': f"Found {len(collections)} collections"
+                }
+            except Exception as e:
+                health_status['healthy'] = False
+                health_status['checks']['list_collections'] = {
+                    'status': 'fail',
+                    'error': str(e),
+                    'message': "Failed to list collections"
+                }
+            
+            # Check 2: Database path accessibility
+            try:
+                if self.db_path.exists():
+                    health_status['checks']['database_path'] = {
+                        'status': 'pass',
+                        'path': str(self.db_path),
+                        'message': "Database path accessible"
+                    }
+                else:
+                    health_status['healthy'] = False
+                    health_status['checks']['database_path'] = {
+                        'status': 'fail',
+                        'path': str(self.db_path),
+                        'message': "Database path does not exist"
+                    }
+            except Exception as e:
+                health_status['healthy'] = False
+                health_status['checks']['database_path'] = {
+                    'status': 'fail',
+                    'error': str(e),
+                    'message': "Database path check failed"
+                }
+            
+            # Check 3: Test creating/getting a health check collection
+            try:
+                test_collection_name = "__health_check__"
+                try:
+                    # Try to get existing health check collection
+                    test_collection = self.client.get_collection(test_collection_name)
+                    health_status['checks']['test_collection'] = {
+                        'status': 'pass',
+                        'message': "Test collection accessible"
+                    }
+                except:
+                    # Create temporary test collection
+                    test_collection = self.client.create_collection(
+                        name=test_collection_name,
+                        metadata={"temp": True}
+                    )
+                    health_status['checks']['test_collection'] = {
+                        'status': 'pass',
+                        'message': "Test collection created successfully"
+                    }
+                
+                # Clean up test collection
+                try:
+                    self.client.delete_collection(test_collection_name)
+                except:
+                    pass  # Don't fail health check if cleanup fails
+                    
+            except Exception as e:
+                health_status['healthy'] = False
+                health_status['checks']['test_collection'] = {
+                    'status': 'fail',
+                    'error': str(e),
+                    'message': "Failed to create/access test collection"
+                }
+            
+            # Set overall error message if unhealthy
+            if not health_status['healthy']:
+                failed_checks = [check for check, details in health_status['checks'].items() 
+                               if details['status'] == 'fail']
+                health_status['error'] = f"Health check failed: {', '.join(failed_checks)}"
+            
+            return health_status
+            
+        except Exception as e:
+            return {
+                'healthy': False,
+                'error': f"Health check exception: {str(e)}",
+                'checks': {},
+                'timestamp': datetime.now().isoformat()
             }
