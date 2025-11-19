@@ -366,3 +366,31 @@ def get_chromadb_instance(persist_directory, collection_name=None, force_new=Fal
             
             print("❌ All ChromaDB initialization methods failed")
             return None
+
+
+def check_collection_exists(persist_directory, collection_name):
+    """
+    Check if a collection exists in the ChromaDB database
+    
+    Args:
+        persist_directory: Path to the ChromaDB directory
+        collection_name: Name of the collection to check
+    
+    Returns:
+        bool: True if collection exists, False otherwise
+    """
+    try:
+        import chromadb
+        
+        # Create client
+        client = chromadb.PersistentClient(path=persist_directory)
+        
+        # Get list of collections
+        collections = client.list_collections()
+        collection_names = [col.name for col in collections]
+        
+        return collection_name in collection_names
+        
+    except Exception as e:
+        print(f"❌ Error checking collection existence: {e}")
+        return False

@@ -74,6 +74,7 @@
                 <a class="nav-link active" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
                 <a class="nav-link" href="{{ url_for('manage_collections') }}">Collections</a>
                 <a class="nav-link" href="{{ url_for('manage_database') }}">Database</a>
+                <a class="nav-link" href="{{ url_for('query_interface') }}">Query</a>
                 <a class="nav-link" href="{{ url_for('stats_viewer') }}">Statistics</a>
             </div>
         </div>
@@ -231,29 +232,21 @@
                 </div>
             </div>
 
-            <!-- Quick Actions -->
+            <!-- RAG Query Interface -->
             <div class="col-md-6 col-lg-3">
                 <div class="card feature-card h-100 text-center">
                     <div class="card-body d-flex flex-column">
                         <div class="mb-3">
-                            <i class="fas fa-bolt fa-3x text-warning"></i>
+                            <i class="fas fa-search fa-3x text-warning"></i>
                         </div>
-                        <h5 class="card-title">Quick Actions</h5>
+                        <h5 class="card-title">RAG Query Interface</h5>
                         <p class="card-text flex-grow-1">
-                            Perform common operations quickly without navigating 
-                            through multiple pages.
+                            Query your resume database using Azure OpenAI LLM.
+                            Ask natural language questions and get intelligent answers.
                         </p>
-                        <div class="btn-group-vertical w-100">
-                            <button class="btn btn-outline-success btn-sm" onclick="createCollection('resumes')">
-                                <i class="fas fa-plus"></i> Create "resumes"
-                            </button>
-                            <button class="btn btn-outline-success btn-sm" onclick="createCollection('langchain')">
-                                <i class="fas fa-plus"></i> Create "langchain"
-                            </button>
-                            <button class="btn btn-outline-info btn-sm" onclick="refreshStats()">
-                                <i class="fas fa-sync-alt"></i> Refresh Stats
-                            </button>
-                        </div>
+                        <a href="{{ url_for('query_interface') }}" class="btn btn-warning text-dark">
+                            <i class="fas fa-brain"></i> Query with AI
+                        </a>
                     </div>
                 </div>
             </div>

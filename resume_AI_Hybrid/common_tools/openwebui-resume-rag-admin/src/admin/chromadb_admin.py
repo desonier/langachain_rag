@@ -10,6 +10,13 @@ from datetime import datetime
 import chromadb
 from chromadb.config import Settings
 
+# Import embedding function at module level to avoid import delays
+try:
+    import chromadb.utils.embedding_functions as embedding_functions
+    EMBEDDING_FUNCTIONS_AVAILABLE = True
+except ImportError:
+    EMBEDDING_FUNCTIONS_AVAILABLE = False
+
 # Add parent directories to path to import shared config
 current_dir = Path(__file__).parent
 project_root = current_dir.parent.parent.parent.parent  # Go up to project root
@@ -161,7 +168,7 @@ class ChromaDBAdmin:
             }
     
     def create_collection(self, collection_name: str) -> Dict[str, Any]:
-        """Create a new collection"""
+        """Create a new collection with the correct embedding function"""
         try:
             client = self.get_client()
             
@@ -176,12 +183,37 @@ class ChromaDBAdmin:
             except:
                 pass  # Collection doesn't exist, which is what we want
             
-            # Create the collection
-            collection = client.create_collection(collection_name)
+            # Create embedding function only if available, otherwise use default
+            embedding_function = None
+            if EMBEDDING_FUNCTIONS_AVAILABLE:
+                try:
+                    # Create HuggingFace embedding function to match the shared config
+                    # This ensures all collections use the same embedding model
+                    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                        model_name="sentence-transformers/all-MiniLM-L6-v2",
+                        device="cpu",
+                        normalize_embeddings=True
+                    )
+                    print(f"✅ Using sentence-transformers/all-MiniLM-L6-v2 embedding function for collection '{collection_name}'")
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not create custom embedding function: {e}")
+                    print("📝 Using default ChromaDB embedding function")
+                    embedding_function = None
+            
+            # Create the collection with or without custom embedding function
+            if embedding_function:
+                collection = client.create_collection(
+                    name=collection_name,
+                    embedding_function=embedding_function
+                )
+                message = f"✅ Collection '{collection_name}' created successfully with sentence-transformers/all-MiniLM-L6-v2 embeddings"
+            else:
+                collection = client.create_collection(name=collection_name)
+                message = f"✅ Collection '{collection_name}' created successfully with default embeddings"
             
             return {
                 "success": True,
-                "message": f"✅ Collection '{collection_name}' created successfully",
+                "message": message,
                 "collection_name": collection_name,
                 "count": 0
             }

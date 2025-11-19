@@ -18,6 +18,21 @@ try:
 except ImportError:
     pass  # python-dotenv not installed
 
+# Import langchain dependencies at module level
+try:
+    from langchain_openai import AzureChatOpenAI
+    from langchain_huggingface import HuggingFaceEmbeddings
+    from langchain_chroma import Chroma
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.runnables import RunnablePassthrough
+    # Import PromptTemplate to avoid "not defined" errors, even if we don't use it
+    from langchain_core.prompts import PromptTemplate
+    print("✅ All langchain imports successful")
+except ImportError as e:
+    print(f"❌ Langchain import error: {e}")
+    print(f"🐍 Python executable: {sys.executable}")
+    print(f"🐍 Python path: {sys.path[:3]}")
+
 try:
     from admin.chromadb_admin import ChromaDBAdmin
     from models.admin_models import CollectionForm, DatabaseForm
@@ -32,8 +47,311 @@ except ImportError as e:
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 
+# Disable template caching for development
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
+
 # Use environment variable for secret key or default
 app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+def query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query_type, max_results):
+    """
+    Query using the existing ChromaDB admin instance to avoid conflicts
+    """
+    print(f"🚨 ENTERING QUERY FUNCTION: query_text='{query_text}', collection='{collection_name}', type='{query_type}'")
+    try:
+        print(f"🔍 QUERY DEBUG: Starting query with text='{query_text}', collection='{collection_name}', type='{query_type}'")
+        
+        # Debug Python environment
+        import sys
+        print(f"🐍 Python executable: {sys.executable}")
+        print(f"🐍 Python path: {sys.path[:3]}...")  # Show first 3 paths
+        
+        # Get Azure OpenAI configuration
+        azure_config = {
+            'azure_endpoint': os.getenv('AZURE_OPENAI_ENDPOINT'),
+            'api_key': os.getenv('AZURE_OPENAI_KEY'),  # Using AZURE_OPENAI_KEY from .env
+            'azure_deployment': os.getenv('AZURE_OPENAI_CHATGPT_DEPLOYMENT', 'resumemodel'),  # Using CHATGPT_DEPLOYMENT
+            'api_version': os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview'),
+            'temperature': 0.1
+        }
+        
+        # Validate Azure OpenAI config
+        if not azure_config['azure_endpoint'] or not azure_config['api_key']:
+            return jsonify({
+                "success": False,
+                "error": "Azure OpenAI configuration missing. Please check your .env file."
+            }), 500
+        
+        # Initialize Azure OpenAI
+        llm = AzureChatOpenAI(**azure_config)
+        
+        # Use the existing ChromaDB client from admin - DO NOT create a new one
+        chroma_client = chromadb_admin.client
+        
+        # Get collections to query
+        if collection_name and collection_name.lower() != 'all':
+            collections_to_query = [collection_name]
+        else:
+            # Query all collections
+            all_collections = chromadb_admin.list_collections()
+            collections_to_query = [col['name'] for col in all_collections]
+        
+        all_results = []
+        
+        for coll_name in collections_to_query:
+            try:
+                # Get the collection directly from the existing client
+                collection = chroma_client.get_collection(coll_name)
+                
+                # Debug: Check collection info
+                collection_count = collection.count()
+                print(f"🔍 DEBUG: Querying collection '{coll_name}' with {collection_count} documents")
+                
+                if collection_count == 0:
+                    print(f"⚠️ WARNING: Collection '{coll_name}' is empty, skipping...")
+                    continue
+                
+                if query_type == 'ranking':
+                    # Use direct ChromaDB query for similarity search
+                    query_results = collection.query(
+                        query_texts=[query_text],
+                        n_results=max_results * 3,  # Get more results to group by source
+                        include=["documents", "metadatas", "distances"]
+                    )
+                    
+                    # Debug: Show query results
+                    result_count = len(query_results['documents'][0]) if query_results['documents'] and query_results['documents'][0] else 0
+                    print(f"🔍 DEBUG: Collection '{coll_name}' returned {result_count} results for query: '{query_text[:50]}...'")
+                    
+                    # Group ranking results by original source file
+                    source_groups = {}
+                    if query_results['documents'] and query_results['documents'][0]:
+                        for doc, metadata, distance in zip(
+                            query_results['documents'][0],
+                            query_results['metadatas'][0],
+                            query_results['distances'][0]
+                        ):
+                            # Determine the original filename
+                            original_name = (metadata.get('display_filename') or 
+                                           metadata.get('original_file_source', '').split('\\')[-1].split('/')[-1] or
+                                           metadata.get('document_name') or 
+                                           metadata.get('source', 'Unknown'))
+                            
+                            if original_name not in source_groups:
+                                source_groups[original_name] = {
+                                    'best_score': float(distance),
+                                    'content_chunks': [],
+                                    'metadata': metadata,
+                                    'collection': coll_name
+                                }
+                            else:
+                                # Keep the best (lowest) score for this source
+                                source_groups[original_name]['best_score'] = min(
+                                    source_groups[original_name]['best_score'], 
+                                    float(distance)
+                                )
+                            
+                            # Add this chunk
+                            chunk_text = doc[:300] + '...' if len(doc) > 300 else doc
+                            source_groups[original_name]['content_chunks'].append(chunk_text)
+                    
+                    # Convert grouped sources to collection results
+                    collection_results = []
+                    for original_name, group_data in source_groups.items():
+                        # Combine chunks but limit total length
+                        combined_content = '\n\n'.join(group_data['content_chunks'])
+                        if len(combined_content) > 500:
+                            combined_content = combined_content[:500] + '...'
+                        
+                        collection_results.append({
+                            'content': combined_content,
+                            'metadata': group_data['metadata'],
+                            'score': group_data['best_score'],
+                            'collection': coll_name,
+                            'original_filename': original_name,
+                            'chunk_count': len(group_data['content_chunks'])
+                        })
+                    
+                    # Sort by best score and limit to max_results
+                    collection_results.sort(key=lambda x: x['score'])
+                    collection_results = collection_results[:max_results]
+                    
+                    all_results.extend(collection_results)
+                
+                else:
+                    # Standard RAG query with LLM - get relevant documents first
+                    query_results = collection.query(
+                        query_texts=[query_text],
+                        n_results=max_results,
+                        include=["documents", "metadatas"]
+                    )
+                    
+                    # Debug: Show query results for RAG
+                    result_count = len(query_results['documents'][0]) if query_results['documents'] and query_results['documents'][0] else 0
+                    print(f"🔍 DEBUG: RAG query on collection '{coll_name}' returned {result_count} results")
+                    
+                    if query_results['documents'] and query_results['documents'][0]:
+                        # Format context from retrieved documents
+                        context_docs = []
+                        for doc, metadata in zip(query_results['documents'][0], query_results['metadatas'][0]):
+                            context_docs.append(doc)
+                        
+                        # Join all context
+                        context = "\n\n".join(context_docs)
+                        
+                        # Create prompt template
+                        prompt_template = """You are an AI assistant helping with resume and career information queries.
+Use the following pieces of context to answer the question. If you don't know the answer based on the context, just say that you don't know.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+                        
+                        # Create and execute the prompt without PromptTemplate class
+                        formatted_prompt = prompt_template.format(context=context, question=query_text)
+                        response = llm.invoke(formatted_prompt)
+                        
+                        # Extract token usage if available
+                        token_usage = {}
+                        if hasattr(response, 'response_metadata') and 'token_usage' in response.response_metadata:
+                            usage = response.response_metadata['token_usage']
+                            token_usage = {
+                                'prompt_tokens': usage.get('prompt_tokens', 0),
+                                'completion_tokens': usage.get('completion_tokens', 0),
+                                'total_tokens': usage.get('total_tokens', 0)
+                            }
+                            
+                            # Estimate cost (approximate rates for GPT-4)
+                            # These are example rates - adjust based on your Azure OpenAI pricing
+                            input_cost_per_1k = 0.03  # $0.03 per 1K tokens for input
+                            output_cost_per_1k = 0.06  # $0.06 per 1K tokens for output
+                            
+                            input_cost = (token_usage['prompt_tokens'] / 1000) * input_cost_per_1k
+                            output_cost = (token_usage['completion_tokens'] / 1000) * output_cost_per_1k
+                            token_usage['estimated_cost'] = input_cost + output_cost
+                        
+                        # Format source documents - Group by original source file
+                        print(f"🔍 DEBUG: Processing {len(query_results['documents'][0])} documents for grouping")
+                        source_groups = {}
+                        for doc, metadata in zip(query_results['documents'][0], query_results['metadatas'][0]):
+                            # Debug: Print metadata to see what we're working with
+                            print(f"🔍 DEBUG: Document metadata: {metadata}")
+                            
+                            # Determine the original filename
+                            original_name = (metadata.get('display_filename') or 
+                                           metadata.get('original_file_source', '').split('\\')[-1].split('/')[-1] or
+                                           metadata.get('document_name') or 
+                                           metadata.get('source', 'Unknown'))
+                            
+                            print(f"🔍 DEBUG: Determined original_name: '{original_name}' from metadata")
+                            
+                            if original_name not in source_groups:
+                                source_groups[original_name] = {
+                                    'content_chunks': [],
+                                    'metadata': metadata,
+                                    'collection': coll_name
+                                }
+                                print(f"🔍 DEBUG: Created new group for '{original_name}'")
+                            else:
+                                print(f"🔍 DEBUG: Added to existing group for '{original_name}'")
+                            
+                            # Add this chunk to the group
+                            chunk_text = doc[:300] + '...' if len(doc) > 300 else doc
+                            source_groups[original_name]['content_chunks'].append(chunk_text)
+                        
+                        print(f"🔍 DEBUG: Created {len(source_groups)} source groups: {list(source_groups.keys())}")
+                        
+                        # Convert grouped sources to formatted list
+                        formatted_sources = []
+                        for original_name, group_data in source_groups.items():
+                            # Combine all chunks for this source, but limit total length
+                            combined_content = '\n\n'.join(group_data['content_chunks'])
+                            if len(combined_content) > 500:
+                                combined_content = combined_content[:500] + '...'
+                            
+                            formatted_sources.append({
+                                'content': combined_content,
+                                'metadata': group_data['metadata'],
+                                'collection': coll_name,
+                                'original_filename': original_name,
+                                'chunk_count': len(group_data['content_chunks'])
+                            })
+                            print(f"🔍 DEBUG: Group '{original_name}' has {len(group_data['content_chunks'])} chunks")
+                        
+                        all_results.append({
+                            'collection': coll_name,
+                            'response': response.content if hasattr(response, 'content') else str(response),
+                            'sources': formatted_sources,
+                            'token_usage': token_usage
+                        })
+                    else:
+                        # No documents found
+                        all_results.append({
+                            'collection': coll_name,
+                            'response': f"No relevant documents found in collection '{coll_name}' for the query.",
+                            'sources': []
+                        })
+                    
+            except Exception as e:
+                print(f"❌ ERROR: Failed to query collection '{coll_name}': {e}")
+                print(f"❌ ERROR: Exception type: {type(e).__name__}")
+                import traceback
+                print(f"❌ ERROR: Traceback: {traceback.format_exc()}")
+                all_results.append({
+                    'collection': coll_name,
+                    'error': str(e)
+                })
+        
+        if query_type == 'ranking':
+            # Sort ranking results by score
+            all_results.sort(key=lambda x: x.get('score', 0))
+            response_data = {
+                "success": True,
+                "query_type": "ranking",
+                "results": all_results
+            }
+            print(f"🔍 QUERY DEBUG: Returning ranking response with {len(all_results)} results")
+            return jsonify(response_data)
+        else:
+            # Calculate aggregated token usage for standard queries
+            total_token_usage = {
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+                'estimated_cost': 0
+            }
+            
+            for result in all_results:
+                if 'token_usage' in result:
+                    usage = result['token_usage']
+                    total_token_usage['prompt_tokens'] += usage.get('prompt_tokens', 0)
+                    total_token_usage['completion_tokens'] += usage.get('completion_tokens', 0)
+                    total_token_usage['total_tokens'] += usage.get('total_tokens', 0)
+                    total_token_usage['estimated_cost'] += usage.get('estimated_cost', 0)
+            
+            response_data = {
+                "success": True,
+                "query_type": "standard",
+                "results": all_results,
+                "token_usage": total_token_usage if total_token_usage['total_tokens'] > 0 else None
+            }
+            print(f"🔍 QUERY DEBUG: Returning standard response with {len(all_results)} results")
+            print(f"🔍 QUERY DEBUG: Sample result: {all_results[0] if all_results else 'No results'}")
+            print(f"🔍 QUERY DEBUG: Token usage: {total_token_usage}")
+            return jsonify(response_data)
+            
+    except Exception as e:
+        print(f"❌ Error in query_with_chromadb_admin: {e}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        return jsonify({
+            "success": False,
+            "error": f"Query failed: {str(e)}"
+        }), 500
 
 def validate_existing_database():
     """
@@ -357,6 +675,60 @@ def view_collection_contents(collection_name):
     return render_template('collection_contents.html', 
                          collection_name=collection_name,
                          contents=contents)
+
+@app.route('/admin/query')
+def query_interface():
+    """RAG Query Interface"""
+    if not chromadb_admin:
+        flash("ChromaDB Admin not available", "error")
+        return redirect(url_for('admin_dashboard'))
+    
+    try:
+        # Get available collections
+        collections = chromadb_admin.list_collections()
+        collection_names = [col['name'] for col in collections]
+        
+        return render_template('query_interface.html', 
+                             collections=collection_names)
+    except Exception as e:
+        flash(f"Error loading query interface: {str(e)}", "error")
+        return redirect(url_for('admin_dashboard'))
+
+@app.route('/api/query', methods=['POST'])
+def api_query():
+    """API endpoint for RAG queries"""
+    if not chromadb_admin:
+        return jsonify({"success": False, "error": "ChromaDB Admin not available"}), 500
+    
+    try:
+        data = request.get_json()
+        query_text = data.get('query', '').strip()
+        collection_name = data.get('collection', None)
+        query_type = data.get('query_type', 'standard')
+        max_results = data.get('max_results', 5)
+        
+        if not query_text:
+            return jsonify({"success": False, "error": "Query text is required"}), 400
+        
+        # Validate collection exists using existing ChromaDB admin instance
+        if collection_name and collection_name.lower() != 'all':
+            collections = chromadb_admin.list_collections()
+            collection_names = [col['name'] for col in collections]
+            if collection_name not in collection_names:
+                return jsonify({
+                    "success": False, 
+                    "error": f"Collection '{collection_name}' not found. Available collections: {collection_names}"
+                }), 400
+        
+        # Use ChromaDB admin instance for querying instead of ResumeQuerySystem
+        # This avoids the instance conflict issue
+        return query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query_type, max_results)
+        
+    except Exception as e:
+        print(f"❌ Query API error: {str(e)}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/admin/stats')
 def stats_viewer():
@@ -949,6 +1321,33 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
 signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
 atexit.register(cleanup_and_exit)  # Called on normal exit
+
+@app.route('/debug/template')
+def debug_template():
+    """Debug endpoint to check template content"""
+    try:
+        import os
+        template_path = os.path.join(app.template_folder, 'query_interface.html')
+        if os.path.exists(template_path):
+            with open(template_path, 'r') as f:
+                content = f.read()
+                # Check if our modifications are there
+                has_v3_title = 'v3.0' in content
+                has_status_box = 'statusRow' in content
+                has_debug_marker = 'TEMPLATE DEBUG' in content
+                
+                return {
+                    'template_path': template_path,
+                    'template_exists': True,
+                    'has_v3_title': has_v3_title,
+                    'has_status_box': has_status_box,
+                    'has_debug_marker': has_debug_marker,
+                    'template_size': len(content)
+                }
+        else:
+            return {'error': f'Template not found at {template_path}'}
+    except Exception as e:
+        return {'error': str(e)}
 
 if __name__ == '__main__':    
     # Check if templates directory exists

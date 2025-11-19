@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Query Interface - ChromaDB Admin (v3.0)</title>
+    <!-- STATUS BOX VERSION - CACHE BUSTER -->
+    <meta name="cache-version" content="statusbox-v3">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .query-card {
+            border: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border-radius: 12px;
+        }
+        .query-input {
+            border-radius: 8px;
+            border: 2px solid #e9ecef;
+            transition: border-color 0.3s ease;
+        }
+        .query-input:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25);
+        }
+        .result-card {
+            background: #f8f9fa;
+            border-left: 4px solid #007bff;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        .source-card {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            transition: transform 0.2s ease;
+        }
+        .source-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .candidate-card {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            transition: transform 0.2s ease;
+        }
+        .candidate-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+        }
+        .score-badge {
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        .score-high { background: #d4edda; color: #155724; }
+        .score-medium { background: #fff3cd; color: #856404; }
+        .score-low { background: #f8d7da; color: #721c24; }
+        .breadcrumb-banner {
+            background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%);
+            border-left: 4px solid #007bff;
+            margin-bottom: 2rem;
+        }
+        .breadcrumb {
+            background: transparent;
+            margin-bottom: 0;
+        }
+        .breadcrumb-item.active {
+            color: #007bff;
+            font-weight: 600;
+        }
+        .loading-spinner {
+            display: none;
+        }
+        .query-examples {
+            background: #e7f3ff;
+            border: 1px solid #b3d4fc;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('admin_dashboard') }}">
+                <i class="fas fa-database"></i> ChromaDB Admin
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+                <a class="nav-link" href="{{ url_for('manage_collections') }}">Collections</a>
+                <a class="nav-link" href="{{ url_for('manage_database') }}">Database</a>
+                <a class="nav-link active" href="{{ url_for('query_interface') }}">Query</a>
+                <a class="nav-link" href="{{ url_for('stats_viewer') }}">Statistics</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Breadcrumb Banner -->
+    <div class="container mt-3">
+        <div class="breadcrumb-banner p-3 rounded">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{{ url_for('admin_dashboard') }}"><i class="fas fa-home"></i> Dashboard</a>
+                    </li>
+                    <li class="breadcrumb-item active" aria-current="page">
+                        <i class="fas fa-search"></i> RAG Query Interface
+                    </li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="container mt-4">
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- Page Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="fas fa-search text-primary"></i> RAG Query Interface</h2>
+                        <p class="text-muted">Query your resume database using Azure OpenAI LLM</p>
+                        <!-- TEMPLATE VERSION CHECK -->
+                        <div class="alert alert-warning mt-2">
+                            <strong>🔧 TEMPLATE DEBUG:</strong> Version 3.0 - Modified Template Active
+                        </div>
+                    </div>
+                    <div>
+                        <button class="btn btn-outline-primary" onclick="showExamples()">
+                            <i class="fas fa-question-circle"></i> Examples
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Query Examples (Hidden by default) -->
+        <div id="queryExamples" class="query-examples mb-4" style="display: none;">
+            <h6><i class="fas fa-lightbulb"></i> Example Queries</h6>
+            <div class="row">
+                <div class="col-md-6">
+                    <p class="mb-2"><strong>General Questions:</strong></p>
+                    <ul class="mb-3">
+                        <li><code>What are Brandon's key technical skills?</code></li>
+                        <li><code>Who has cybersecurity experience?</code></li>
+                        <li><code>Find candidates with cloud computing skills</code></li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <p class="mb-2"><strong>Ranking Queries:</strong></p>
+                    <ul class="mb-3">
+                        <li><code>Top 5 candidates for a cybersecurity role</code></li>
+                        <li><code>Best candidates with Azure experience</code></li>
+                        <li><code>Rank candidates by years of experience</code></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Query Form -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card query-card mb-4">
+                    <div class="card-body p-4">
+                        <form id="queryForm">
+                            <!-- Collection Selection -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">
+                                        <i class="fas fa-folder"></i> Collection
+                                    </label>
+                                    <select class="form-select" id="collectionSelect" onchange="updateResumeCount()">
+                                        <option value="">All Collections</option>
+                                        {% for collection in collections %}
+                                        <option value="{{ collection }}">{{ collection }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">
+                                        <i class="fas fa-cog"></i> Query Type
+                                    </label>
+                                    <select class="form-select" id="queryTypeSelect" onchange="toggleMaxResults()">
+                                        <option value="standard">Standard Query</option>
+                                        <option value="ranking">Ranked Candidates</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Resume Count Status Box -->
+                            <div class="row mb-3" id="statusRow" style="display: none;">
+                                <div class="col-12">
+                                    <div class="alert alert-info mb-3">
+                                        <div class="d-flex align-items-center">
+                                            <i class="fas fa-info-circle me-2"></i>
+                                            <span id="statusText">Loading resume count...</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- CACHE BUSTER - Status box should be visible above -->
+                            <div class="row mb-2">
+                                <div class="col-12">
+                                    <small class="text-muted">Template Version: 3.0 - Status Box Active</small>
+                                </div>
+                            </div>
+
+                            <!-- Max Results (for ranking) -->
+                            <div class="row mb-3" id="maxResultsRow" style="display: none;">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">
+                                        <i class="fas fa-list-ol"></i> Max Results
+                                    </label>
+                                    <select class="form-select" id="maxResults">
+                                        <option value="3">Top 3</option>
+                                        <option value="5" selected>Top 5</option>
+                                        <option value="10">Top 10</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Query Input -->
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">
+                                    <i class="fas fa-comment-dots"></i> Your Question
+                                </label>
+                                <textarea class="form-control query-input" 
+                                          id="queryText" 
+                                          rows="4" 
+                                          placeholder="e.g., What are Brandon's key skills and technical expertise?"></textarea>
+                            </div>
+
+                            <!-- Submit Button -->
+                            <div class="text-center">
+                                <button type="submit" class="btn btn-primary btn-lg px-5">
+                                    <i class="fas fa-search"></i> Search
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Spinner -->
+        <div class="row">
+            <div class="col-12">
+                <div class="loading-spinner text-center p-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Processing your query...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Container -->
+        <div id="resultsContainer"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function toggleMaxResults() {
+            const queryType = document.getElementById('queryTypeSelect').value;
+            const maxResultsRow = document.getElementById('maxResultsRow');
+            maxResultsRow.style.display = queryType === 'ranking' ? 'block' : 'none';
+        }
+
+        function showExamples() {
+            const examples = document.getElementById('queryExamples');
+            examples.style.display = examples.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function updateResumeCount() {
+            const collectionSelect = document.getElementById('collectionSelect');
+            const selectedCollection = collectionSelect.value;
+            const statusRow = document.getElementById('statusRow');
+            const statusText = document.getElementById('statusText');
+            
+            if (!selectedCollection) {
+                // All Collections selected
+                try {
+                    const response = await fetch('/api/database/stats');
+                    const stats = await response.json();
+                    
+                    let totalResumes = 0;
+                    let collectionNames = [];
+                    
+                    if (stats.collections) {
+                        stats.collections.forEach(collStats => {
+                            if (collStats.documents && typeof collStats.documents === 'number') {
+                                totalResumes += collStats.documents;
+                                collectionNames.push(collStats.name);
+                            }
+                        });
+                    }
+                    
+                    statusText.innerHTML = `<strong>Search Scope:</strong> All Collections (${collectionNames.length} collections, ${totalResumes} total resumes)`;
+                    statusRow.style.display = 'block';
+                } catch (error) {
+                    statusText.innerHTML = `<strong>Search Scope:</strong> All Collections (count unavailable)`;
+                    statusRow.style.display = 'block';
+                }
+            } else {
+                // Specific collection selected
+                try {
+                    const response = await fetch('/api/database/stats');
+                    const stats = await response.json();
+                    
+                    let resumeCount = 0;
+                    if (stats.collections) {
+                        const collectionData = stats.collections.find(coll => coll.name === selectedCollection);
+                        if (collectionData && typeof collectionData.documents === 'number') {
+                            resumeCount = collectionData.documents;
+                        }
+                    }
+                    
+                    statusText.innerHTML = `<strong>Search Scope:</strong> Collection "${selectedCollection}" (${resumeCount} resumes)`;
+                    statusRow.style.display = 'block';
+                } catch (error) {
+                    statusText.innerHTML = `<strong>Search Scope:</strong> Collection "${selectedCollection}" (count unavailable)`;
+                    statusRow.style.display = 'block';
+                }
+            }
+        }
+
+        // Initialize resume count on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded - Status box version v3.0');
+            console.log('Status row element:', document.getElementById('statusRow'));
+            console.log('Collection select element:', document.getElementById('collectionSelect'));
+            
+            // Force show status box for debugging
+            const statusRow = document.getElementById('statusRow');
+            if (statusRow) {
+                console.log('Found status row, making it visible...');
+                statusRow.style.display = 'block';
+                document.getElementById('statusText').innerHTML = '<strong>Status Box Test:</strong> Template version 3.0 loaded successfully!';
+            } else {
+                console.error('Status row element not found!');
+            }
+            
+            updateResumeCount();
+        });
+
+        document.getElementById('queryForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const queryText = document.getElementById('queryText').value.trim();
+            if (!queryText) {
+                alert('Please enter a question');
+                return;
+            }
+
+            const collection = document.getElementById('collectionSelect').value || null;
+            const queryType = document.getElementById('queryTypeSelect').value;
+            const maxResults = document.getElementById('maxResults').value;
+
+            // Show loading spinner
+            document.querySelector('.loading-spinner').style.display = 'block';
+            document.getElementById('resultsContainer').innerHTML = '';
+
+            try {
+                const response = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: queryText,
+                        collection: collection,
+                        query_type: queryType,
+                        max_results: parseInt(maxResults)
+                    })
+                });
+
+                const result = await response.json();
+
+                // Hide loading spinner
+                document.querySelector('.loading-spinner').style.display = 'none';
+
+                if (result.success) {
+                    if (result.query_type === 'ranking') {
+                        displayRankingResults(result.results);
+                    } else {
+                        displayStandardResults(result);
+                    }
+                } else {
+                    displayError(result.error);
+                }
+            } catch (error) {
+                document.querySelector('.loading-spinner').style.display = 'none';
+                displayError('Network error: ' + error.message);
+            }
+        });
+
+        function displayStandardResults(result) {
+            const container = document.getElementById('resultsContainer');
+            
+            if (!result.results || result.results.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> No results found.
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+
+            result.results.forEach((collectionResult) => {
+                if (collectionResult.error) {
+                    html += `
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <div class="alert alert-danger">
+                                    <h6><i class="fas fa-exclamation-circle"></i> Error in collection: ${collectionResult.collection}</h6>
+                                    <p class="mb-0">${collectionResult.error}</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                html += `
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <div class="result-card p-4">
+                                <h5><i class="fas fa-lightbulb text-primary"></i> Answer from ${collectionResult.collection}</h5>
+                                <p class="mb-0">${collectionResult.response}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                if (collectionResult.sources && collectionResult.sources.length > 0) {
+                    html += `
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-file-alt text-info"></i> Source Documents from ${collectionResult.collection}</h6>
+                            </div>
+                        </div>
+                        <div class="row mb-4">
+                    `;
+
+                    collectionResult.sources.forEach((doc, index) => {
+                        // Use the original filename that's now processed by the backend
+                        const originalName = doc.original_filename || 
+                                           doc.metadata?.display_filename || 
+                                           doc.metadata?.original_file_source?.split('\\').pop()?.split('/').pop() ||
+                                           doc.metadata?.document_name || 
+                                           'Unknown';
+                        
+                        // Show chunk count if multiple chunks were combined
+                        const chunkInfo = doc.chunk_count > 1 ? ` (${doc.chunk_count} chunks combined)` : '';
+                        
+                        html += `
+                            <div class="col-md-4 mb-3">
+                                <div class="source-card p-3 h-100">
+                                    <h6><i class="fas fa-document text-primary"></i> Document ${index + 1}</h6>
+                                    <p class="small text-muted mb-2">
+                                        <strong>Source:</strong> ${originalName}${chunkInfo}<br>
+                                        <strong>Collection:</strong> ${doc.collection}
+                                    </p>
+                                    <p class="small">${doc.content}</p>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    html += '</div>';
+                }
+            });
+
+            // Add token usage table if available
+            if (result.token_usage) {
+                html += `
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header bg-light">
+                                    <h6 class="mb-0"><i class="fas fa-chart-bar text-info"></i> Token Usage Statistics</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Metric</th>
+                                                    <th>Count</th>
+                                                    <th>Details</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td><strong>Tokens Sent</strong></td>
+                                                    <td><span class="badge bg-primary">${result.token_usage.prompt_tokens}</span></td>
+                                                    <td>Query + context sent to Azure OpenAI</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><strong>Tokens Received</strong></td>
+                                                    <td><span class="badge bg-success">${result.token_usage.completion_tokens}</span></td>
+                                                    <td>Response generated by Azure OpenAI</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><strong>Total Tokens</strong></td>
+                                                    <td><span class="badge bg-info">${result.token_usage.total_tokens}</span></td>
+                                                    <td>Combined input and output tokens</td>
+                                                </tr>
+                                                ${result.token_usage.estimated_cost ? `
+                                                <tr>
+                                                    <td><strong>Estimated Cost</strong></td>
+                                                    <td><span class="badge bg-warning text-dark">$${result.token_usage.estimated_cost.toFixed(4)}</span></td>
+                                                    <td>Approximate cost based on Azure OpenAI pricing</td>
+                                                </tr>
+                                                ` : ''}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function displayRankingResults(results) {
+            const container = document.getElementById('resultsContainer');
+            
+            if (!results || results.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> No matching documents found.
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div class="row">
+                    <div class="col-12">
+                        <h4><i class="fas fa-trophy text-warning"></i> Ranked Documents</h4>
+                        <p class="text-muted mb-4">Found ${results.length} relevant documents, ranked by relevance</p>
+                    </div>
+                </div>
+                <div class="row">
+            `;
+
+            results.forEach((doc, index) => {
+                const scorePercentage = Math.max(0, Math.min(100, (1 - doc.score) * 100)); // Convert distance to percentage
+                const scoreClass = scorePercentage >= 80 ? 'score-high' : 
+                                 scorePercentage >= 60 ? 'score-medium' : 'score-low';
+                const rankIcon = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+                
+                const originalName = doc.original_filename || 
+                                   doc.metadata?.display_filename || 
+                                   doc.metadata?.original_file_source?.split('\\').pop()?.split('/').pop() ||
+                                   doc.metadata?.document_name || 
+                                   'Unknown';
+                
+                const chunkInfo = doc.chunk_count > 1 ? ` (${doc.chunk_count} chunks)` : '';
+
+                html += `
+                    <div class="col-12 mb-4">
+                        <div class="candidate-card p-4">
+                            <div class="row">
+                                <div class="col-md-8">
+                                    <div class="d-flex align-items-center mb-3">
+                                        <span class="h4 me-3">${rankIcon}</span>
+                                        <div>
+                                            <h5 class="mb-1">${originalName}${chunkInfo}</h5>
+                                            <p class="text-muted mb-0">Collection: ${doc.collection}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="document-content">
+                                        <p>${doc.content}</p>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="text-center mb-3">
+                                        <div class="score-badge ${scoreClass}">
+                                            ${scorePercentage.toFixed(1)}%
+                                        </div>
+                                        <small class="text-muted d-block">Relevance Score</small>
+                                    </div>
+                                    
+                                    <div class="small text-muted">
+                                        <p><strong>Distance:</strong> ${doc.score.toFixed(4)}</p>
+                                        <p><strong>Collection:</strong> ${doc.collection}</p>
+                                        ${doc.chunk_count ? `<p><strong>Chunks Combined:</strong> ${doc.chunk_count}</p>` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function displayError(error) {
+            const container = document.getElementById('resultsContainer');
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-circle"></i> <strong>Error:</strong> ${error}
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
