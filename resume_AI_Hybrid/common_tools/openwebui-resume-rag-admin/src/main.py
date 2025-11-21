@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import sys
 import os
+import json
 import signal
 import atexit
 from pathlib import Path
@@ -27,18 +28,18 @@ try:
     from langchain_core.runnables import RunnablePassthrough
     # Import PromptTemplate to avoid "not defined" errors, even if we don't use it
     from langchain_core.prompts import PromptTemplate
-    print("✅ All langchain imports successful")
+    print("ll langchain imports successful")
 except ImportError as e:
-    print(f"❌ Langchain import error: {e}")
-    print(f"🐍 Python executable: {sys.executable}")
-    print(f"🐍 Python path: {sys.path[:3]}")
+    print(f"Langchain import error: {e}")
+    print(f"Python executable: {sys.executable}")
+    print(f"Python path: {sys.path[:3]}")
 
 try:
     from admin.chromadb_admin import ChromaDBAdmin
-    from models.admin_models import CollectionForm, DatabaseForm
+    from models.admin_models import CollectionForm, DatabaseForm, ModelSelectionForm
 except ImportError as e:
-    print(f"❌ Import Error: {e}")
-    print("🔍 Checking file structure...")
+    print(f"Import Error: {e}")
+    print("Checking file structure...")
     print(f"Current dir: {current_dir}")
     print(f"Admin dir exists: {(current_dir / 'admin').exists()}")
     print(f"Models dir exists: {(current_dir / 'models').exists()}")
@@ -54,18 +55,191 @@ app.jinja_env.auto_reload = True
 # Use environment variable for secret key or default
 app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
+def get_dynamic_llm(provider=None, model=None):
+    """Get LLM instance based on provider and model selection"""
+    try:
+        # Import shared config if available - add parent directories to path
+        try:
+            import sys
+            from pathlib import Path
+            
+            # Add parent directories to Python path
+            current_dir = Path(__file__).parent
+            project_root = current_dir.parent.parent.parent  # Go up to resume_AI_Hybrid directory
+            sys.path.insert(0, str(project_root))
+            
+            from shared_config import get_config, get_dynamic_llm_config
+            config = get_config()
+            provider = provider or config.llm_provider
+            model = model or config.llm_model
+            llm_config = get_dynamic_llm_config(provider, model)
+            print(f"DEBUG: Using shared_config - provider: {provider}, model: {model}")
+            print(f"DEBUG: LLM config: {llm_config}")
+        except ImportError as e:
+            print(f"DEBUG: shared_config import failed: {e}")
+            # Fallback configuration
+            provider = provider or "azure-openai"
+            llm_config = {
+                'azure_endpoint': os.getenv('AZURE_OPENAI_ENDPOINT'),
+                'api_key': os.getenv('AZURE_OPENAI_KEY'),
+                'azure_deployment': os.getenv('AZURE_OPENAI_CHATGPT_DEPLOYMENT', 'resumemodel'),
+                'api_version': os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview'),
+                'temperature': 0.1
+            }
+            print(f"DEBUG: Using fallback config: {llm_config}")
+        
+        if provider == "azure-openai":
+            return AzureChatOpenAI(**llm_config)
+        elif provider == "openai":
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(**llm_config)
+        elif provider == "anthropic":
+            try:
+                from langchain_anthropic import ChatAnthropic
+                return ChatAnthropic(**llm_config)
+            except ImportError:
+                print("⚠️ Anthropic not available, falling back to Azure OpenAI")
+                return AzureChatOpenAI(**{
+                    'azure_endpoint': os.getenv('AZURE_OPENAI_ENDPOINT'),
+                    'api_key': os.getenv('AZURE_OPENAI_KEY'),
+                    'azure_deployment': os.getenv('AZURE_OPENAI_CHATGPT_DEPLOYMENT'),
+                    'api_version': os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview'),
+                    'temperature': 0.1
+                })
+        else:
+            # Default to Azure OpenAI
+            return AzureChatOpenAI(**llm_config)
+            
+    except Exception as e:
+        print(f"⚠️ Error creating LLM: {e}")
+        # Emergency fallback
+        return AzureChatOpenAI(
+            azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
+            api_key=os.getenv('AZURE_OPENAI_KEY'),
+            azure_deployment=os.getenv('AZURE_OPENAI_CHATGPT_DEPLOYMENT'),
+            api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview'),
+            temperature=0.1
+        )
+
+def save_custom_model(model_type, provider, model_name):
+    """Save custom model to JSON file"""
+    try:
+        import json
+        custom_models_file = os.path.join(os.path.dirname(__file__), 'custom_models.json')
+        
+        # Load existing models or create empty structure
+        if os.path.exists(custom_models_file):
+            with open(custom_models_file, 'r') as f:
+                custom_models = json.load(f)
+        else:
+            custom_models = {"embedding": {}, "llm": {}}
+        
+        # Ensure model_type exists
+        if model_type not in custom_models:
+            custom_models[model_type] = {}
+        
+        # Ensure provider exists for model_type
+        if provider not in custom_models[model_type]:
+            custom_models[model_type][provider] = []
+        
+        # Add model if not already present
+        if model_name not in custom_models[model_type][provider]:
+            custom_models[model_type][provider].append(model_name)
+        
+        # Save updated models
+        with open(custom_models_file, 'w') as f:
+            json.dump(custom_models, f, indent=2)
+            
+        print(f"✅ Saved custom {model_type} model: {provider}/{model_name}")
+        
+    except Exception as e:
+        print(f"❌ Error saving custom model: {e}")
+        raise
+
+def load_custom_providers():
+    """Load custom providers from JSON file"""
+    try:
+        custom_providers_file = os.path.join(os.path.dirname(__file__), 'custom_providers.json')
+        if os.path.exists(custom_providers_file):
+            with open(custom_providers_file, 'r') as f:
+                custom_providers = json.load(f)
+        else:
+            # Create default providers file
+            custom_providers = {
+                "llm": {
+                    "azure-openai": {"display_name": "Azure OpenAI", "builtin": True},
+                    "openai": {"display_name": "OpenAI", "builtin": True},
+                    "anthropic": {"display_name": "Anthropic", "builtin": True}
+                },
+                "embedding": {
+                    "huggingface": {"display_name": "HuggingFace", "builtin": True},
+                    "azure-openai": {"display_name": "Azure OpenAI", "builtin": True},
+                    "openai": {"display_name": "OpenAI", "builtin": True}
+                }
+            }
+        return custom_providers
+    except Exception as e:
+        print(f"Error loading custom providers: {e}")
+        return {"llm": {}, "embedding": {}}
+
+def save_custom_provider(provider_type, provider_id, display_name, base_url=None, api_key_env=None):
+    """Save custom provider to JSON file"""
+    try:
+        custom_providers = load_custom_providers()
+        
+        # Ensure the type exists
+        if provider_type not in custom_providers:
+            custom_providers[provider_type] = {}
+            
+        # Add the provider
+        custom_providers[provider_type][provider_id] = {
+            "display_name": display_name,
+            "base_url": base_url,
+            "api_key_env": api_key_env,
+            "builtin": False
+        }
+        
+        # Save to file
+        custom_providers_file = os.path.join(os.path.dirname(__file__), 'custom_providers.json')
+        with open(custom_providers_file, 'w') as f:
+            json.dump(custom_providers, f, indent=2)
+            
+        print(f"Saved custom provider: {provider_type}/{provider_id}")
+        
+    except Exception as e:
+        print(f"Error saving custom provider: {e}")
+        raise
+
+def load_custom_models():
+    try:
+        import json
+        custom_models_file = os.path.join(os.path.dirname(__file__), 'custom_models.json')
+        
+        if os.path.exists(custom_models_file):
+            with open(custom_models_file, 'r') as f:
+                custom_models = json.load(f)
+        else:
+            custom_models = {"embedding": {}, "llm": {}}
+        
+        return custom_models
+        
+    except Exception as e:
+        print(f"❌ Error loading custom models: {e}")
+        # Return empty structure on error
+        return {"embedding": {}, "llm": {}}
+
 def query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query_type, max_results):
     """
     Query using the existing ChromaDB admin instance to avoid conflicts
     """
-    print(f"🚨 ENTERING QUERY FUNCTION: query_text='{query_text}', collection='{collection_name}', type='{query_type}'")
+    print(f"ENTERING QUERY FUNCTION: query_text='{query_text}', collection='{collection_name}', type='{query_type}'")
     try:
-        print(f"🔍 QUERY DEBUG: Starting query with text='{query_text}', collection='{collection_name}', type='{query_type}'")
+        print(f"QUERY DEBUG: Starting query with text='{query_text}', collection='{collection_name}', type='{query_type}'")
         
         # Debug Python environment
         import sys
-        print(f"🐍 Python executable: {sys.executable}")
-        print(f"🐍 Python path: {sys.path[:3]}...")  # Show first 3 paths
+        print(f"Python executable: {sys.executable}")
+        print(f"Python path: {sys.path[:3]}...")  # Show first 3 paths
         
         # Get Azure OpenAI configuration
         azure_config = {
@@ -83,8 +257,8 @@ def query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query
                 "error": "Azure OpenAI configuration missing. Please check your .env file."
             }), 500
         
-        # Initialize Azure OpenAI
-        llm = AzureChatOpenAI(**azure_config)
+        # Initialize LLM using dynamic selection
+        llm = get_dynamic_llm()
         
         # Use the existing ChromaDB client from admin - DO NOT create a new one
         chroma_client = chromadb_admin.client
@@ -106,10 +280,10 @@ def query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query
                 
                 # Debug: Check collection info
                 collection_count = collection.count()
-                print(f"🔍 DEBUG: Querying collection '{coll_name}' with {collection_count} documents")
+                print(f"DEBUG: Querying collection '{coll_name}' with {collection_count} documents")
                 
                 if collection_count == 0:
-                    print(f"⚠️ WARNING: Collection '{coll_name}' is empty, skipping...")
+                    print(f"WARNING: Collection '{coll_name}' is empty, skipping...")
                     continue
                 
                 if query_type == 'ranking':
@@ -122,7 +296,7 @@ def query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query
                     
                     # Debug: Show query results
                     result_count = len(query_results['documents'][0]) if query_results['documents'] and query_results['documents'][0] else 0
-                    print(f"🔍 DEBUG: Collection '{coll_name}' returned {result_count} results for query: '{query_text[:50]}...'")
+                    print(f"DEBUG: Collection '{coll_name}' returned {result_count} results for query: '{query_text[:50]}...'")
                     
                     # Group ranking results by original source file
                     source_groups = {}
@@ -189,7 +363,7 @@ def query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query
                     
                     # Debug: Show query results for RAG
                     result_count = len(query_results['documents'][0]) if query_results['documents'] and query_results['documents'][0] else 0
-                    print(f"🔍 DEBUG: RAG query on collection '{coll_name}' returned {result_count} results")
+                    print(f"DEBUG: RAG query on collection '{coll_name}' returned {result_count} results")
                     
                     if query_results['documents'] and query_results['documents'][0]:
                         # Format context from retrieved documents
@@ -235,11 +409,11 @@ Answer:"""
                             token_usage['estimated_cost'] = input_cost + output_cost
                         
                         # Format source documents - Group by original source file
-                        print(f"🔍 DEBUG: Processing {len(query_results['documents'][0])} documents for grouping")
+                        print(f"DEBUG: Processing {len(query_results['documents'][0])} documents for grouping")
                         source_groups = {}
                         for doc, metadata in zip(query_results['documents'][0], query_results['metadatas'][0]):
                             # Debug: Print metadata to see what we're working with
-                            print(f"🔍 DEBUG: Document metadata: {metadata}")
+                            print(f"DEBUG: Document metadata: {metadata}")
                             
                             # Determine the original filename
                             original_name = (metadata.get('display_filename') or 
@@ -247,7 +421,7 @@ Answer:"""
                                            metadata.get('document_name') or 
                                            metadata.get('source', 'Unknown'))
                             
-                            print(f"🔍 DEBUG: Determined original_name: '{original_name}' from metadata")
+                            print(f"DEBUG: Determined original_name: '{original_name}' from metadata")
                             
                             if original_name not in source_groups:
                                 source_groups[original_name] = {
@@ -255,15 +429,15 @@ Answer:"""
                                     'metadata': metadata,
                                     'collection': coll_name
                                 }
-                                print(f"🔍 DEBUG: Created new group for '{original_name}'")
+                                print(f"DEBUG: Created new group for '{original_name}'")
                             else:
-                                print(f"🔍 DEBUG: Added to existing group for '{original_name}'")
+                                print(f"DEBUG: Added to existing group for '{original_name}'")
                             
                             # Add this chunk to the group
                             chunk_text = doc[:300] + '...' if len(doc) > 300 else doc
                             source_groups[original_name]['content_chunks'].append(chunk_text)
                         
-                        print(f"🔍 DEBUG: Created {len(source_groups)} source groups: {list(source_groups.keys())}")
+                        print(f"DEBUG: Created {len(source_groups)} source groups: {list(source_groups.keys())}")
                         
                         # Convert grouped sources to formatted list
                         formatted_sources = []
@@ -280,7 +454,7 @@ Answer:"""
                                 'original_filename': original_name,
                                 'chunk_count': len(group_data['content_chunks'])
                             })
-                            print(f"🔍 DEBUG: Group '{original_name}' has {len(group_data['content_chunks'])} chunks")
+                            print(f"DEBUG: Group '{original_name}' has {len(group_data['content_chunks'])} chunks")
                         
                         all_results.append({
                             'collection': coll_name,
@@ -297,10 +471,10 @@ Answer:"""
                         })
                     
             except Exception as e:
-                print(f"❌ ERROR: Failed to query collection '{coll_name}': {e}")
-                print(f"❌ ERROR: Exception type: {type(e).__name__}")
+                print(f"ERROR: Failed to query collection '{coll_name}': {e}")
+                print(f"ERROR: Exception type: {type(e).__name__}")
                 import traceback
-                print(f"❌ ERROR: Traceback: {traceback.format_exc()}")
+                print(f"ERROR: Traceback: {traceback.format_exc()}")
                 all_results.append({
                     'collection': coll_name,
                     'error': str(e)
@@ -314,7 +488,7 @@ Answer:"""
                 "query_type": "ranking",
                 "results": all_results
             }
-            print(f"🔍 QUERY DEBUG: Returning ranking response with {len(all_results)} results")
+            print(f"QUERY DEBUG: Returning ranking response with {len(all_results)} results")
             return jsonify(response_data)
         else:
             # Calculate aggregated token usage for standard queries
@@ -339,15 +513,15 @@ Answer:"""
                 "results": all_results,
                 "token_usage": total_token_usage if total_token_usage['total_tokens'] > 0 else None
             }
-            print(f"🔍 QUERY DEBUG: Returning standard response with {len(all_results)} results")
-            print(f"🔍 QUERY DEBUG: Sample result: {all_results[0] if all_results else 'No results'}")
-            print(f"🔍 QUERY DEBUG: Token usage: {total_token_usage}")
+            print(f"QUERY DEBUG: Returning standard response with {len(all_results)} results")
+            print(f"QUERY DEBUG: Sample result: {all_results[0] if all_results else 'No results'}")
+            print(f"QUERY DEBUG: Token usage: {total_token_usage}")
             return jsonify(response_data)
             
     except Exception as e:
-        print(f"❌ Error in query_with_chromadb_admin: {e}")
+        print(f"Error in query_with_chromadb_admin: {e}")
         import traceback
-        print(f"❌ Full traceback: {traceback.format_exc()}")
+        print(f"Full traceback: {traceback.format_exc()}")
         return jsonify({
             "success": False,
             "error": f"Query failed: {str(e)}"
@@ -370,7 +544,7 @@ def validate_existing_database():
             # Fallback path
             db_path = Path(r"C:\Users\DamonDesonier\repos\langachain_rag\resume_AI_Hybrid\resume_vectordb")
         
-        print(f"🔍 Checking for existing database at: {db_path}")
+        print(f"Checking for existing database at: {db_path}")
         
         # Check if database directory and files exist
         if not db_path.exists():
@@ -411,20 +585,20 @@ def validate_existing_database():
             
         except Exception as db_error:
             error_msg = f"Database found but failed to connect: {str(db_error)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return True, False, error_msg
             
     except Exception as e:
         error_msg = f"Error during database validation: {str(e)}"
-        print(f"❌ {error_msg}")
+        print(f"{error_msg}")
         return False, False, error_msg
 
 def show_database_error_popup(error_message):
     """Show database error in both console and attempt to show system notification"""
     print("\n" + "="*60)
-    print("🚨 DATABASE INITIALIZATION ERROR")
+    print("DATABASE INITIALIZATION ERROR")
     print("="*60)
-    print(f"❌ {error_message}")
+    print(f"{error_message}")
     print("="*60)
     print("Recommendations:")
     print("1. Check if another ChromaDB instance is running")
@@ -458,7 +632,7 @@ startup_db_validation = {
 
 if db_exists and not can_connect:
     show_database_error_popup(error_msg)
-    print("⚠️ Continuing with limited functionality...")
+    print("Continuing with limited functionality...")
 
 def startup_banner():
     """Display startup status banner"""
@@ -471,15 +645,15 @@ def startup_banner():
         if startup_db_validation['can_connect']:
             print(f"✅ Connection Test: Successful")
         else:
-            print(f"❌ Connection Test: Failed")
+            print(f"Connection Test: Failed")
             print(f"   Error: {startup_db_validation['error_message']}")
     else:
         print(f"📂 Database Status: No existing database (will create on first use)")
     
     if chromadb_admin:
-        print(f"✅ Admin Status: Initialized successfully")
+        print(f"dmin Status: Initialized successfully")
     else:
-        print(f"❌ Admin Status: Failed to initialize")
+        print(f"Admin Status: Failed to initialize")
         if startup_db_validation['error_message']:
             print(f"   Error: {startup_db_validation['error_message']}")
     
@@ -499,11 +673,11 @@ try:
     
     # If database validation failed but admin initialized, warn user
     if db_exists and not can_connect:
-        print("⚠️ Database connection issues detected but admin initialized")
+        print("Database connection issues detected but admin initialized")
         print("   Some features may not work properly")
         
 except Exception as e:
-    print(f"❌ Failed to initialize ChromaDBAdmin: {e}")
+    print(f"Failed to initialize ChromaDBAdmin: {e}")
     chromadb_admin = None
     startup_db_validation['error_message'] = f"ChromaDBAdmin initialization failed: {e}"
     
@@ -725,9 +899,9 @@ def api_query():
         return query_with_chromadb_admin(chromadb_admin, query_text, collection_name, query_type, max_results)
         
     except Exception as e:
-        print(f"❌ Query API error: {str(e)}")
+        print(f"Query API error: {str(e)}")
         import traceback
-        print(f"❌ Full traceback: {traceback.format_exc()}")
+        print(f"Full traceback: {traceback.format_exc()}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/admin/stats')
@@ -744,6 +918,782 @@ def stats_viewer():
         flash(f"Error loading statistics: {str(e)}", 'error')
     
     return render_template('stats_viewer.html', stats=stats)
+
+@app.route('/admin/models', methods=['GET', 'POST'])
+def manage_models():
+    """Model selection and configuration interface"""
+    if not chromadb_admin:
+        flash("ChromaDB Admin not available", "error")
+        return redirect(url_for('admin_dashboard'))
+    
+    form = ModelSelectionForm()
+    
+    # Load custom providers and update form choices
+    custom_providers = load_custom_providers()
+    llm_provider_choices = []
+    embedding_provider_choices = []
+    
+    # Add LLM providers
+    for provider_id, provider_info in custom_providers.get('llm', {}).items():
+        display_name = provider_info.get('display_name', provider_id.title())
+        llm_provider_choices.append((provider_id, display_name))
+    
+    # Add embedding providers  
+    for provider_id, provider_info in custom_providers.get('embedding', {}).items():
+        display_name = provider_info.get('display_name', provider_id.title())
+        embedding_provider_choices.append((provider_id, display_name))
+    
+    # Update form choices
+    form.llm_provider.choices = llm_provider_choices
+    form.embedding_provider.choices = embedding_provider_choices
+    
+    # Get current configuration
+    try:
+        from shared_config import get_config
+        config = get_config()
+        
+        # Set form defaults from current configuration
+        if request.method == 'GET':
+            import os
+            form.llm_provider.data = os.getenv('LLM_PROVIDER', config.llm_provider)
+            form.llm_model.data = config.llm_model
+            form.embedding_provider.data = os.getenv('EMBEDDING_PROVIDER', config.embedding_provider)
+            form.embedding_model.data = config.embedding_model
+            form.temperature.data = float(os.getenv('LLM_TEMPERATURE', config.llm_temperature))
+            
+            # Azure OpenAI fields
+            form.azure_endpoint.data = os.getenv('AZURE_OPENAI_ENDPOINT', '')
+            form.azure_api_version.data = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+            form.azure_llm_deployment.data = os.getenv('AZURE_OPENAI_CHATGPT_DEPLOYMENT', '')
+            form.azure_embedding_deployment.data = os.getenv('AZURE_OPENAI_EMBEDDING_DEPLOYMENT', '')
+            
+            # OpenAI fields
+            form.openai_base_url.data = os.getenv('OPENAI_BASE_URL', '')
+            form.openai_organization.data = os.getenv('OPENAI_ORGANIZATION', '')
+            
+            # HuggingFace fields
+            form.huggingface_endpoint.data = os.getenv('HUGGINGFACE_ENDPOINT_URL', '')
+            
+            # Ollama fields
+            form.ollama_base_url.data = os.getenv('OLLAMA_BASE_URL', '')
+            
+    except Exception as e:
+        flash(f"Error loading current configuration: {e}", "error")
+    
+    if request.method == 'POST' and form.validate_on_submit():
+        try:
+            # Update environment variables
+            import os
+            os.environ['LLM_PROVIDER'] = form.llm_provider.data
+            os.environ['EMBEDDING_PROVIDER'] = form.embedding_provider.data
+            os.environ['LLM_TEMPERATURE'] = str(form.temperature.data)
+            
+            # Azure OpenAI Configuration
+            if form.azure_endpoint.data:
+                os.environ['AZURE_OPENAI_ENDPOINT'] = form.azure_endpoint.data
+            if form.azure_api_key.data:
+                os.environ['AZURE_OPENAI_API_KEY'] = form.azure_api_key.data
+            if form.azure_api_version.data:
+                os.environ['AZURE_OPENAI_API_VERSION'] = form.azure_api_version.data
+            if form.azure_llm_deployment.data:
+                os.environ['AZURE_OPENAI_CHATGPT_DEPLOYMENT'] = form.azure_llm_deployment.data
+            if form.azure_embedding_deployment.data:
+                os.environ['AZURE_OPENAI_EMBEDDING_DEPLOYMENT'] = form.azure_embedding_deployment.data
+            
+            # OpenAI Configuration
+            if form.openai_api_key.data:
+                os.environ['OPENAI_API_KEY'] = form.openai_api_key.data
+            if form.openai_base_url.data:
+                os.environ['OPENAI_BASE_URL'] = form.openai_base_url.data
+            if form.openai_organization.data:
+                os.environ['OPENAI_ORGANIZATION'] = form.openai_organization.data
+            
+            # Anthropic Configuration
+            if form.anthropic_api_key.data:
+                os.environ['ANTHROPIC_API_KEY'] = form.anthropic_api_key.data
+            
+            # HuggingFace Configuration
+            if form.huggingface_api_key.data:
+                os.environ['HUGGINGFACE_API_TOKEN'] = form.huggingface_api_key.data
+            if form.huggingface_endpoint.data:
+                os.environ['HUGGINGFACE_ENDPOINT_URL'] = form.huggingface_endpoint.data
+            
+            # Ollama Configuration
+            if form.ollama_api_key.data:
+                os.environ['OLLAMA_API_KEY'] = form.ollama_api_key.data
+            if form.ollama_base_url.data:
+                os.environ['OLLAMA_BASE_URL'] = form.ollama_base_url.data
+            
+            # Set model-specific environment variables
+            if form.llm_provider.data == 'azure-openai':
+                os.environ['AZURE_OPENAI_CHATGPT_DEPLOYMENT'] = form.llm_model.data
+            elif form.llm_provider.data == 'openai':
+                os.environ['OPENAI_MODEL'] = form.llm_model.data
+            elif form.llm_provider.data == 'anthropic':
+                os.environ['ANTHROPIC_MODEL'] = form.llm_model.data
+            elif form.llm_provider.data in ['ollama', 'ollama-cloud']:
+                os.environ['OLLAMA_MODEL'] = form.llm_model.data
+            
+            # Set embedding model environment variables
+            if form.embedding_provider.data == 'huggingface':
+                os.environ['HUGGINGFACE_EMBEDDING_MODEL'] = form.embedding_model.data
+            elif form.embedding_provider.data == 'azure-openai':
+                os.environ['AZURE_OPENAI_EMBEDDING_DEPLOYMENT'] = form.embedding_model.data
+            elif form.embedding_provider.data == 'openai':
+                os.environ['OPENAI_EMBEDDING_MODEL'] = form.embedding_model.data
+            
+            flash("✅ Model configuration updated successfully! Configuration is active immediately.", "success")
+            
+            # Save custom models if provided
+            if form.custom_llm_model_name.data:
+                save_custom_model('llm', form.llm_provider.data, form.custom_llm_model_name.data)
+            if form.custom_embedding_model_name.data:
+                save_custom_model('embedding', form.embedding_provider.data, form.custom_embedding_model_name.data)
+            
+        except Exception as e:
+            flash(f"❌ Error updating model configuration: {e}", "error")
+    
+    # Get available providers and models
+    try:
+        available_providers = {
+            "embedding": config.get_available_embedding_providers(),
+            "llm": config.get_available_llm_providers()
+        }
+    except:
+        available_providers = {"embedding": [], "llm": []}
+    
+    # Load custom models
+    custom_models = load_custom_models()
+    
+    return render_template('model_selector.html', 
+                         form=form, 
+                         available_providers=available_providers,
+                         custom_models=custom_models)
+
+@app.route('/api/models/debug', methods=['POST'])
+def debug_model_config():
+    """Debug model configuration"""
+    data = request.get_json()
+    provider = data.get('provider')
+    model = data.get('model')
+    
+    debug_info = {
+        "environment_vars": {
+            "AZURE_OPENAI_ENDPOINT": os.getenv('AZURE_OPENAI_ENDPOINT'),
+            "AZURE_OPENAI_CHATGPT_DEPLOYMENT": os.getenv('AZURE_OPENAI_CHATGPT_DEPLOYMENT'),
+            "AZURE_OPENAI_API_VERSION": os.getenv('AZURE_OPENAI_API_VERSION'),
+            "AZURE_OPENAI_KEY_SET": bool(os.getenv('AZURE_OPENAI_KEY'))
+        },
+        "requested": {
+            "provider": provider,
+            "model": model
+        }
+    }
+    
+    return jsonify({"success": True, "debug_info": debug_info})
+
+@app.route('/api/models/test-simple', methods=['POST'])
+def test_simple():
+    """Simple test to isolate the os variable issue"""
+    try:
+        import sys
+        env_module = sys.modules.get('os')
+        if not env_module:
+            import os as env_module
+        
+        return jsonify({
+            "success": True,
+            "message": "Simple test passed",
+            "azure_endpoint": env_module.getenv('AZURE_OPENAI_ENDPOINT', 'not_found')
+        })
+    except Exception as e:
+        import traceback
+        print(f"Simple test error: {e}")
+        print(f"Simple test traceback: {traceback.format_exc()}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        })
+
+@app.route('/api/ollama-cloud/models', methods=['POST'])
+def get_ollama_cloud_models():
+    """Get available models from Ollama Cloud"""
+    try:
+        import requests
+        
+        # Get request data
+        data = request.get_json() or {}
+        
+        # Get API key from request data first, then environment
+        api_key = data.get('api_key') or os.getenv('OLLAMA_API_KEY')
+        if not api_key:
+            return jsonify({
+                "success": False,
+                "error": "No Ollama API key provided. Please enter your API key in the UI."
+            })
+        
+        # Test endpoint
+        url = "https://ollama.com/api/tags"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                models = data.get("models", [])
+                
+                # Format models for the dropdown
+                model_options = []
+                for model in models:
+                    model_name = model.get("name", "")
+                    if model_name:
+                        # Create display name
+                        display_name = model_name
+                        if "cloud" in model_name.lower():
+                            display_name = f"{model_name} (Cloud)"
+                        
+                        model_options.append({
+                            "value": model_name,
+                            "text": display_name,
+                            "size": model.get("size", 0)
+                        })
+                
+                # Sort by name for better UX
+                model_options.sort(key=lambda x: x["text"])
+                
+                return jsonify({
+                    "success": True,
+                    "models": model_options,
+                    "count": len(model_options)
+                })
+                
+            except Exception as parse_error:
+                return jsonify({
+                    "success": False,
+                    "error": f"Failed to parse Ollama response: {str(parse_error)}"
+                })
+                
+        elif response.status_code == 401:
+            return jsonify({
+                "success": False,
+                "error": "Invalid Ollama API key. Check your key at https://ollama.com/settings/keys"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Ollama API error: HTTP {response.status_code}"
+            })
+            
+    except requests.exceptions.ConnectionError:
+        return jsonify({
+            "success": False,
+            "error": "Cannot connect to Ollama Cloud. Check internet connection."
+        })
+    except requests.exceptions.Timeout:
+        return jsonify({
+            "success": False,
+            "error": "Ollama Cloud request timeout."
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Error fetching Ollama models: {str(e)}"
+        })
+
+@app.route('/api/models/test', methods=['POST'])
+def test_model_connection():
+    """Test connection to specified model"""
+    import sys
+    import traceback
+    
+    try:
+        # Get environment module reference cleanly
+        env_module = sys.modules.get('os')
+        if not env_module:
+            import os as env_module
+        
+        data = request.get_json()
+        provider = data.get('provider')
+        model = data.get('model')
+        
+        print(f"DEBUG: Starting test for provider={provider}, model={model}, test_type={data.get('test_type')}")
+        
+        # Test LLM connection
+        if data.get('test_type') == 'llm':
+            if provider == "azure-openai":
+                print(f"DEBUG: About to test Azure OpenAI with deployment: {model}")
+                try:
+                    # Validate required Azure configuration
+                    endpoint = env_module.getenv('AZURE_OPENAI_ENDPOINT')
+                    api_key = env_module.getenv('AZURE_OPENAI_KEY') or env_module.getenv('AZURE_OPENAI_API_KEY')
+                    api_version = env_module.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+                    
+                    if not endpoint:
+                        return jsonify({
+                            "success": False,
+                            "error": "Azure OpenAI endpoint not found. Set AZURE_OPENAI_ENDPOINT environment variable."
+                        })
+                    
+                    if not api_key:
+                        return jsonify({
+                            "success": False,
+                            "error": "Azure OpenAI API key not found. Set AZURE_OPENAI_KEY or AZURE_OPENAI_API_KEY environment variable."
+                        })
+                    
+                    if not api_version:
+                        return jsonify({
+                            "success": False,
+                            "error": "Azure OpenAI API version not found. Set AZURE_OPENAI_API_VERSION environment variable."
+                        })
+                    
+                    llm_config = {
+                        'azure_endpoint': endpoint,
+                        'api_key': api_key,
+                        'azure_deployment': model,
+                        'api_version': api_version,
+                        'temperature': 0.1
+                    }
+                    print(f"DEBUG: Config built: {llm_config}")
+                    print(f"DEBUG: Using API version: {api_version}")
+                    
+                    # Test AzureChatOpenAI creation
+                    print("DEBUG: About to create AzureChatOpenAI instance...")
+                    llm = AzureChatOpenAI(**llm_config)
+                    print("DEBUG: AzureChatOpenAI instance created successfully")
+                    
+                    print("DEBUG: About to invoke LLM...")
+                    response = llm.invoke("Test connection. Reply with: OK")
+                    print(f"DEBUG: LLM response: {response}")
+                    
+                    return jsonify({
+                        "success": True,
+                        "message": f"✅ LLM connection successful",
+                        "response": response.content[:100] if hasattr(response, 'content') else str(response)[:100]
+                    })
+                except Exception as llm_error:
+                    print(f"DEBUG: LLM error: {llm_error}")
+                    print(f"DEBUG: LLM traceback: {traceback.format_exc()}")
+                    return jsonify({
+                        "success": False,
+                        "error": f"Azure OpenAI LLM test failed: {str(llm_error)}"
+                    })
+            elif provider == "openai":
+                from langchain_openai import ChatOpenAI
+                api_key = env_module.getenv('OPENAI_API_KEY')
+                if not api_key:
+                    return jsonify({
+                        "success": False,
+                        "error": "OpenAI API key not found. Set OPENAI_API_KEY environment variable."
+                    })
+                
+                llm_config = {
+                    'model': model,
+                    'api_key': api_key,
+                    'temperature': 0.1
+                }
+                
+                # Add base URL if specified
+                base_url = env_module.getenv('OPENAI_BASE_URL')
+                if base_url:
+                    llm_config['base_url'] = base_url
+                    
+                print(f"DEBUG: Testing OpenAI with model: {model}")
+                print(f"DEBUG: Config: {llm_config}")
+                llm = ChatOpenAI(**llm_config)
+            elif provider == "anthropic":
+                try:
+                    from langchain_anthropic import ChatAnthropic
+                    llm_config = {
+                        'model': model,
+                        'api_key': env_module.getenv('ANTHROPIC_API_KEY'),
+                        'temperature': 0.1
+                    }
+                    llm = ChatAnthropic(**llm_config)
+                except ImportError:
+                    return jsonify({
+                        "success": False,
+                        "error": "Anthropic package not installed"
+                    })
+            else:
+                # Handle custom providers
+                try:
+                    custom_providers = load_custom_providers()
+                    if provider in custom_providers.get('llm', {}):
+                        provider_info = custom_providers['llm'][provider]
+                        base_url = provider_info.get('base_url')
+                        api_key_env = provider_info.get('api_key_env')
+                        
+                        api_key = None
+                        if api_key_env:
+                            # First try to get from request data (for UI tests)
+                            api_key = data.get('api_key')
+                            print(f"DEBUG: API key from request data: {'***' + api_key[-4:] if api_key and len(api_key) > 4 else 'None'}")
+                            if not api_key:
+                                # Fall back to environment variable
+                                api_key = env_module.getenv(api_key_env)
+                                print(f"DEBUG: API key from environment: {'***' + api_key[-4:] if api_key and len(api_key) > 4 else 'None'}")
+                            
+                            # Only require API key if the environment variable name is specified
+                            # and it's not a local service that might not need authentication
+                            if not api_key and not (base_url and 'localhost' in base_url):
+                                return jsonify({
+                                    "success": False,
+                                    "error": f"API key not found for {provider}. Please enter API key in the UI or set {api_key_env} environment variable."
+                                })
+                        
+                        # Try to use OpenAI-compatible client for custom providers
+                        from langchain_openai import ChatOpenAI
+                        llm_config = {
+                            'model': model,
+                            'temperature': 0.1
+                        }
+                        
+                        # Handle different authentication methods
+                        if api_key:
+                            if provider == 'ollama-cloud':
+                                # Ollama Cloud uses different authentication approach
+                                # Set up proper headers and client configuration
+                                llm_config['api_key'] = api_key
+                                llm_config['default_headers'] = {
+                                    'Authorization': f'Bearer {api_key}',
+                                    'Content-Type': 'application/json'
+                                }
+                            else:
+                                llm_config['api_key'] = api_key
+                        
+                        if base_url:
+                            # Fix Ollama endpoints
+                            if provider == 'ollama-cloud':
+                                # Ollama Cloud uses direct API endpoint
+                                if 'ollama.com' in base_url and '/v1' not in base_url:
+                                    base_url = 'https://ollama.com/v1'
+                                llm_config['base_url'] = base_url
+                            elif provider == 'ollama':
+                                # Local Ollama
+                                if 'localhost:11434' in base_url and '/v1' not in base_url:
+                                    base_url = 'http://localhost:11434/v1'
+                                llm_config['base_url'] = base_url
+                            else:
+                                llm_config['base_url'] = base_url
+                            
+                        print(f"DEBUG: Testing custom provider {provider} with config: {llm_config}")
+                        
+                        # Special handling for Ollama Cloud
+                        if provider == 'ollama-cloud':
+                            try:
+                                # Use direct API test like the working test script
+                                import requests
+                                
+                                # Test endpoint
+                                test_url = "https://ollama.com/api/tags"
+                                headers = {
+                                    "Authorization": f"Bearer {api_key}",
+                                    "Content-Type": "application/json"
+                                }
+                                
+                                print(f"DEBUG: Testing Ollama Cloud with direct API call...")
+                                response = requests.get(test_url, headers=headers, timeout=10)
+                                
+                                if response.status_code == 200:
+                                    # API key is valid, now test chat
+                                    chat_url = "https://ollama.com/api/chat"
+                                    chat_payload = {
+                                        "model": model,
+                                        "messages": [
+                                            {
+                                                "role": "user",
+                                                "content": "Hello! Please respond with 'API test successful'."
+                                            }
+                                        ],
+                                        "stream": False
+                                    }
+                                    
+                                    chat_response = requests.post(
+                                        chat_url, 
+                                        headers=headers, 
+                                        json=chat_payload, 
+                                        timeout=30
+                                    )
+                                    
+                                    if chat_response.status_code == 200:
+                                        try:
+                                            chat_data = chat_response.json()
+                                            message_content = chat_data.get("message", {}).get("content", "Success")
+                                            print(f"DEBUG: Ollama Cloud chat test successful: {message_content[:100]}...")
+                                            return jsonify({
+                                                "success": True,
+                                                "message": f"✅ Ollama Cloud connection successful",
+                                                "response": message_content[:100]
+                                            })
+                                        except Exception as json_error:
+                                            return jsonify({
+                                                "success": False,
+                                                "error": f"Ollama Cloud chat response invalid: {str(json_error)}"
+                                            })
+                                    else:
+                                        return jsonify({
+                                            "success": False,
+                                            "error": f"Ollama Cloud chat failed: HTTP {chat_response.status_code} - {chat_response.text[:200]}"
+                                        })
+                                elif response.status_code == 401:
+                                    return jsonify({
+                                        "success": False,
+                                        "error": "Ollama Cloud authentication failed (401). Please check your API key from https://ollama.com/settings/keys"
+                                    })
+                                else:
+                                    return jsonify({
+                                        "success": False,
+                                        "error": f"Ollama Cloud API test failed: HTTP {response.status_code} - {response.text[:200]}"
+                                    })
+                                    
+                            except requests.exceptions.ConnectionError:
+                                return jsonify({
+                                    "success": False,
+                                    "error": "Cannot connect to Ollama Cloud. Check your internet connection."
+                                })
+                            except requests.exceptions.Timeout:
+                                return jsonify({
+                                    "success": False,
+                                    "error": "Ollama Cloud request timeout. Service may be slow or unavailable."
+                                })
+                            except Exception as e:
+                                error_msg = str(e)
+                                print(f"DEBUG: Ollama Cloud error: {error_msg}")
+                                return jsonify({
+                                    "success": False,
+                                    "error": f"Ollama Cloud connection error: {error_msg}"
+                                })
+                        else:
+                            llm = ChatOpenAI(**llm_config)
+                    else:
+                        return jsonify({
+                            "success": False,
+                            "error": f"Unknown provider: {provider}"
+                        })
+                except Exception as custom_error:
+                    return jsonify({
+                        "success": False,
+                        "error": f"Custom provider error: {str(custom_error)}"
+                    })
+        
+        # Test embedding connection
+        elif data.get('test_type') == 'embedding':
+            if not chromadb_admin:
+                return jsonify({
+                    "success": False, 
+                    "error": "ChromaDB Admin not available"
+                })
+            
+            try:
+                embedding_function = chromadb_admin.get_dynamic_embedding_function(provider, model)
+                if embedding_function:
+                    try:
+                        if hasattr(embedding_function, '__call__'):
+                            test_result = embedding_function(["test text"])
+                            return jsonify({
+                                "success": True,
+                                "message": f"✅ Embedding model connection successful",
+                                "dimensions": len(test_result[0]) if test_result and len(test_result) > 0 else "Unknown"
+                            })
+                        else:
+                            return jsonify({
+                                "success": True,
+                                "message": f"✅ Embedding function created successfully"
+                            })
+                    except Exception as e:
+                        return jsonify({
+                            "success": False,
+                            "error": f"Embedding test failed: {str(e)}"
+                        })
+                else:
+                    error_details = []
+                    if provider == "azure-openai":
+                        if not env_module.getenv("AZURE_OPENAI_API_KEY") and not env_module.getenv("AZURE_OPENAI_KEY"):
+                            error_details.append("Missing Azure OpenAI API key")
+                        if not env_module.getenv("AZURE_OPENAI_ENDPOINT"):
+                            error_details.append("Missing Azure OpenAI endpoint")
+                    elif provider == "openai":
+                        if not env_module.getenv("OPENAI_API_KEY"):
+                            error_details.append("Missing OpenAI API key")
+                    elif provider == "huggingface":
+                        error_details.append("HuggingFace model may not be available or sentence-transformers not installed")
+                    
+                    error_msg = f"Failed to create embedding function. {'; '.join(error_details) if error_details else 'Unknown error'}"
+                    return jsonify({
+                        "success": False,
+                        "error": error_msg
+                    })
+            except Exception as e:
+                return jsonify({
+                    "success": False,
+                    "error": f"Embedding connection test error: {str(e)}"
+                })
+        
+        else:
+            return jsonify({
+                "success": False,
+                "error": "Invalid test type. Use 'llm' or 'embedding'"
+            })
+            
+    except Exception as e:
+        print(f"FULL TRACEBACK: {traceback.format_exc()}")
+        return jsonify({
+            "success": False,
+            "error": f"Connection test failed: {str(e)}"
+        })
+
+@app.route('/api/models/add', methods=['POST'])
+def add_custom_model():
+    """API endpoint to add custom model"""
+    data = request.get_json()
+    model_type = data.get('type')  # 'embedding' or 'llm'
+    provider = data.get('provider')
+    model_name = data.get('name')
+    
+    if not all([model_type, provider, model_name]):
+        return jsonify({
+            "success": False,
+            "error": "Missing required fields: type, provider, name"
+        })
+    
+    try:
+        save_custom_model(model_type, provider, model_name)
+        return jsonify({
+            "success": True,
+            "message": f"✅ Custom {model_type} model '{model_name}' added successfully"
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to add custom model: {str(e)}"
+        })
+
+@app.route('/api/models/remove', methods=['POST'])
+def remove_custom_model():
+    """API endpoint to remove custom model"""
+    data = request.get_json()
+    model_type = data.get('type')  # 'embedding' or 'llm'
+    provider = data.get('provider')
+    model_name = data.get('name')
+    
+    if not all([model_type, provider, model_name]):
+        return jsonify({
+            "success": False,
+            "error": "Missing required fields: type, provider, name"
+        })
+    
+    try:
+        # Load existing custom models
+        custom_models = load_custom_models()
+        
+        # Remove the model
+        if model_type in custom_models and provider in custom_models[model_type]:
+            if model_name in custom_models[model_type][provider]:
+                custom_models[model_type][provider].remove(model_name)
+                
+                # Clean up empty provider lists
+                if not custom_models[model_type][provider]:
+                    del custom_models[model_type][provider]
+                
+                # Save updated models
+                import json
+                custom_models_file = os.path.join(os.path.dirname(__file__), 'custom_models.json')
+                with open(custom_models_file, 'w') as f:
+                    json.dump(custom_models, f, indent=2)
+                
+                return jsonify({
+                    "success": True,
+                    "message": f"✅ Custom {model_type} model '{model_name}' removed successfully"
+                })
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": f"Model '{model_name}' not found in {provider} {model_type} models"
+                })
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"No custom {model_type} models found for provider {provider}"
+            })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to remove custom model: {str(e)}"
+        })
+
+@app.route('/api/providers/list')
+def list_custom_providers():
+    """API endpoint to list custom providers"""
+    try:
+        custom_providers = load_custom_providers()
+        return jsonify({
+            "success": True,
+            "providers": custom_providers
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to load custom providers: {str(e)}"
+        })
+
+@app.route('/api/providers/add', methods=['POST'])
+def add_custom_provider():
+    """API endpoint to add custom provider"""
+    data = request.get_json()
+    provider_type = data.get('type')  # 'llm', 'embedding', or 'both'
+    provider_id = data.get('id')
+    display_name = data.get('display_name')
+    base_url = data.get('base_url')
+    api_key_env = data.get('api_key_env')
+    
+    if not all([provider_type, provider_id, display_name]):
+        return jsonify({
+            "success": False,
+            "error": "Missing required fields: type, id, display_name"
+        })
+    
+    try:
+        # Validate provider_id format (no spaces, lowercase, hyphens ok)
+        import re
+        if not re.match(r'^[a-z0-9-]+$', provider_id):
+            return jsonify({
+                "success": False,
+                "error": "Provider ID must contain only lowercase letters, numbers, and hyphens"
+            })
+            
+        if provider_type in ['llm', 'both']:
+            save_custom_provider('llm', provider_id, display_name, base_url, api_key_env)
+        if provider_type in ['embedding', 'both']:
+            save_custom_provider('embedding', provider_id, display_name, base_url, api_key_env)
+            
+        return jsonify({
+            "success": True,
+            "message": f"✅ Custom provider '{display_name}' added successfully"
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to add custom provider: {str(e)}"
+        })
+
+@app.route('/api/models/list')
+def list_custom_models():
+    """API endpoint to list custom models"""
+    try:
+        custom_models = load_custom_models()
+        return jsonify({
+            "success": True,
+            "models": custom_models
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to load custom models: {str(e)}"
+        })
 
 # API endpoints for AJAX calls
 @app.route('/api/database/status')
@@ -967,7 +1917,7 @@ def bulk_upload(collection_name):
             import time
             time.sleep(0.5)
         except Exception as cleanup_error:
-            print(f"⚠️ ChromaDB cleanup warning: {cleanup_error}")
+            print(f"ChromaDB cleanup warning: {cleanup_error}")
         
         from ingest_pipeline import ResumeIngestPipeline
         
@@ -1023,23 +1973,23 @@ def bulk_upload(collection_name):
 @app.route('/api/collections/<collection_name>/upload', methods=['POST'])
 def api_bulk_upload(collection_name):
     """API endpoint for bulk upload with file upload support"""
-    print("🔍 API ENDPOINT CALLED!")
-    print(f"🔍 Collection: {collection_name}")
-    print(f"🔍 Request method: {request.method}")
-    print(f"🔍 Request form: {request.form}")
+    print("API ENDPOINT CALLED!")
+    print(f"Collection: {collection_name}")
+    print(f"Request method: {request.method}")
+    print(f"Request form: {request.form}")
     
     if not chromadb_admin:
-        print("❌ ChromaDB admin not available")
+        print("ChromaDB admin not available")
         return jsonify({"success": False, "error": "ChromaDB admin not available"}), 500
     
     try:
         upload_type = request.form.get('upload_type', 'directory')
-        print(f"🔍 Upload type: {upload_type}")
+        print(f"Upload type: {upload_type}")
         
         if upload_type == 'directory':
             # Directory upload
             upload_directory = request.form.get('upload_directory')
-            print(f"🔍 Upload directory: {upload_directory}")
+            print(f"Upload directory: {upload_directory}")
             if not upload_directory:
                 return jsonify({"success": False, "error": "Upload directory required"}), 400
             
@@ -1050,14 +2000,14 @@ def api_bulk_upload(collection_name):
             # Check if directory has files
             files = list(upload_path.glob('**/*'))
             supported_files = [f for f in files if f.is_file() and f.suffix.lower() in ['.pdf', '.docx', '.txt']]
-            print(f"🔍 Found {len(supported_files)} supported files")
+            print(f"Found {len(supported_files)} supported files")
             
             if not supported_files:
                 return jsonify({"success": False, "error": "No supported files found in directory"}), 400
             
             # Process directory with timeout handling
             sys.path.append(str(current_dir.parent.parent))
-            print(f"🔍 Trying to import ResumeIngestPipeline...")
+            print(f"Trying to import ResumeIngestPipeline...")
             
             # Force cleanup of existing ChromaDB instances before creating pipeline
             try:
@@ -1069,18 +2019,18 @@ def api_bulk_upload(collection_name):
                 import time
                 time.sleep(0.5)
             except Exception as cleanup_error:
-                print(f"⚠️ ChromaDB cleanup warning: {cleanup_error}")
+                print(f"ChromaDB cleanup warning: {cleanup_error}")
             
             try:
                 from ingest_pipeline import ResumeIngestPipeline
-                print(f"🔍 Successfully imported ResumeIngestPipeline")
+                print(f"Successfully imported ResumeIngestPipeline")
                 
-                print(f"🔍 Creating pipeline for collection: {collection_name}")
+                print(f"Creating pipeline for collection: {collection_name}")
                 pipeline = ResumeIngestPipeline(collection_name=collection_name)
                 print(f"✅ Pipeline created successfully")
                 
             except Exception as pipeline_error:
-                print(f"❌ Pipeline creation failed: {pipeline_error}")
+                print(f"Pipeline creation failed: {pipeline_error}")
                 return jsonify({
                     "success": False, 
                     "error": f"Failed to initialize pipeline: {str(pipeline_error)}"
@@ -1091,10 +2041,10 @@ def api_bulk_upload(collection_name):
             
             for file_path in supported_files:
                 try:
-                    print(f"🔍 Processing file {processed_count + 1}/{len(supported_files)}: {file_path.name}")
+                    print(f"Processing file {processed_count + 1}/{len(supported_files)}: {file_path.name}")
                     success, resume_id, chunks_added = pipeline.add_resume(str(file_path))
                     print(f"✅ Result: success={success}, resume_id={resume_id}, chunks={chunks_added}")
-                    print(f"📊 Resume processed: {file_path.name} ({'✅ SUCCESS' if success else '❌ FAILED'})")
+                    print(f"📊 Resume processed: {file_path.name} ({'✅ SUCCESS' if success else 'FAILED'})")
                     
                     results.append({
                         'file': file_path.name,
@@ -1107,7 +2057,7 @@ def api_bulk_upload(collection_name):
                     processed_count += 1
                     
                 except Exception as file_error:
-                    print(f"❌ Error processing {file_path}: {str(file_error)}")
+                    print(f"Error processing {file_path}: {str(file_error)}")
                     results.append({
                         'file': file_path.name,
                         'success': False,
@@ -1128,7 +2078,7 @@ def api_bulk_upload(collection_name):
             print(f"\n📈 DIRECTORY UPLOAD SUMMARY:")
             print(f"   📊 Total resumes processed: {len(results)}")
             print(f"   ✅ Successful uploads: {success_count}")
-            print(f"   ❌ Failed uploads: {len(results) - success_count}")
+            print(f"   Failed uploads: {len(results) - success_count}")
             print(f"   📦 Total chunks created: {sum(r.get('chunks', 0) for r in results)}")
             print(f"   📁 Collection: {collection_name}")
             print(f"   📂 Source directory: {upload_directory}\n")
@@ -1174,7 +2124,7 @@ def api_bulk_upload(collection_name):
                     raise Exception("Could not get existing database connection")
                     
             except Exception as e:
-                print(f"⚠️ Could not reuse connection: {e}")
+                print(f"Could not reuse connection: {e}")
                 print("🧹 Cleaning up connections before creating new pipeline...")
                 
                 # Force cleanup of all connections before creating new one
@@ -1190,7 +2140,7 @@ def api_bulk_upload(collection_name):
                     time.sleep(1.0)
                     print("✅ Cleanup completed, creating new pipeline...")
                 except Exception as cleanup_error:
-                    print(f"⚠️ Cleanup warning: {cleanup_error}")
+                    print(f"Cleanup warning: {cleanup_error}")
                 
                 # Now create new pipeline
                 pipeline = ResumeIngestPipeline(collection_name=collection_name)
@@ -1209,10 +2159,10 @@ def api_bulk_upload(collection_name):
                         file.save(str(file_path))
                         
                         try:
-                            print(f"🔍 Processing uploaded file: {file.filename}")
+                            print(f"Processing uploaded file: {file.filename}")
                             success, resume_id, chunks_added = pipeline.add_resume(str(file_path), original_filename=file.filename)
                             print(f"✅ Result: success={success}, resume_id={resume_id}, chunks={chunks_added}")
-                            print(f"📊 Resume uploaded: {file.filename} ({'✅ SUCCESS' if success else '❌ FAILED'})")
+                            print(f"📊 Resume uploaded: {file.filename} ({'✅ SUCCESS' if success else 'FAILED'})")
                             results.append({
                                 'file': file.filename,
                                 'success': success,
@@ -1222,10 +2172,10 @@ def api_bulk_upload(collection_name):
                                 'error': None if success else "Failed to process file"
                             })
                         except Exception as file_error:
-                            print(f"❌ DETAILED ERROR processing {file.filename}: {str(file_error)}")
-                            print(f"❌ ERROR TYPE: {type(file_error).__name__}")
+                            print(f"DETAILED ERROR processing {file.filename}: {str(file_error)}")
+                            print(f"ERROR TYPE: {type(file_error).__name__}")
                             import traceback
-                            print(f"❌ FULL TRACEBACK: {traceback.format_exc()}")
+                            print(f"FULL TRACEBACK: {traceback.format_exc()}")
                             results.append({
                                 'file': file.filename,
                                 'success': False,
@@ -1243,7 +2193,7 @@ def api_bulk_upload(collection_name):
                 del pipeline
                 print("🧹 Cleaned up pipeline connections")
             except Exception as cleanup_error:
-                print(f"⚠️ Pipeline cleanup warning: {cleanup_error}")
+                print(f"Pipeline cleanup warning: {cleanup_error}")
             
             # Refresh ChromaDB client to ensure new data is visible
             if success_count > 0:
@@ -1254,7 +2204,7 @@ def api_bulk_upload(collection_name):
             print(f"\n📈 FILE UPLOAD SUMMARY:")
             print(f"   📊 Total resumes processed: {len(results)}")
             print(f"   ✅ Successful uploads: {success_count}")
-            print(f"   ❌ Failed uploads: {len(results) - success_count}")
+            print(f"   Failed uploads: {len(results) - success_count}")
             print(f"   📦 Total chunks created: {sum(r.get('chunks', 0) for r in results)}")
             print(f"   📁 Collection: {collection_name}\n")
             
@@ -1300,10 +2250,10 @@ def cleanup_and_exit():
             from chromadb_factory import cleanup_chromadb_instances
             cleanup_chromadb_instances()
         except Exception as e:
-            print(f"⚠️ Factory cleanup error: {e}")
+            print(f"Factory cleanup error: {e}")
             
     except Exception as e:
-        print(f"⚠️ Error during cleanup: {e}")
+        print(f"Error during cleanup: {e}")
     
     # Force garbage collection to clean up any remaining references
     import gc
@@ -1353,7 +2303,7 @@ if __name__ == '__main__':
     # Check if templates directory exists
     templates_dir = current_dir.parent / 'templates'
     if not templates_dir.exists():
-        print(f"❌ Templates directory not found: {templates_dir}")
+        print(f"Templates directory not found: {templates_dir}")
         print("Please ensure the templates directory exists with HTML files.")
         sys.exit(1)
     
@@ -1367,7 +2317,7 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\n🛑 KeyboardInterrupt received")
     except Exception as e:
-        print(f"❌ Failed to start Flask app: {e}")
+        print(f"Failed to start Flask app: {e}")
     finally:
         # Ensure cleanup happens even if app.run() exits unexpectedly
         cleanup_and_exit()

@@ -98,6 +98,70 @@ class ChromaDBAdmin:
                 print("✅ ChromaDB client connection closed")
             except Exception as e:
                 print(f"⚠️ Error closing ChromaDB client: {e}")
+    
+    def get_dynamic_embedding_function(self, provider=None, model=None):
+        """Get embedding function based on provider and model selection"""
+        if not EMBEDDING_FUNCTIONS_AVAILABLE:
+            return None
+            
+        try:
+            # Use shared config if available
+            if SHARED_CONFIG_AVAILABLE:
+                config = get_config()
+                provider = provider or config.embedding_provider
+                model = model or config.embedding_model
+            else:
+                provider = provider or "huggingface"
+                model = model or "sentence-transformers/all-MiniLM-L6-v2"
+            
+            if provider == "huggingface":
+                try:
+                    return embedding_functions.SentenceTransformerEmbeddingFunction(
+                        model_name=model,
+                        device="cpu",
+                        normalize_embeddings=True
+                    )
+                except Exception as hf_error:
+                    print(f"⚠️ Error creating HuggingFace embedding function: {hf_error}")
+                    return None
+            elif provider == "azure-openai":
+                import os
+                azure_key = os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_KEY")
+                azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+                
+                if not azure_key or not azure_endpoint:
+                    print(f"⚠️ Missing Azure OpenAI configuration: key={bool(azure_key)}, endpoint={bool(azure_endpoint)}")
+                    return None
+                    
+                return embedding_functions.OpenAIEmbeddingFunction(
+                    api_key=azure_key,
+                    api_base=azure_endpoint,
+                    api_type="azure",
+                    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+                    model_name=model
+                )
+            elif provider == "openai":
+                import os
+                openai_key = os.getenv("OPENAI_API_KEY")
+                
+                if not openai_key:
+                    print(f"⚠️ Missing OpenAI API key")
+                    return None
+                    
+                return embedding_functions.OpenAIEmbeddingFunction(
+                    api_key=openai_key,
+                    model_name=model
+                )
+            else:
+                # Default fallback
+                return embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    device="cpu",
+                    normalize_embeddings=True
+                )
+        except Exception as e:
+            print(f"⚠️ Error creating embedding function: {e}")
+            return None
         
     def __del__(self):
         """Destructor to ensure client is closed"""
@@ -167,8 +231,8 @@ class ChromaDBAdmin:
                 "error": str(e)
             }
     
-    def create_collection(self, collection_name: str) -> Dict[str, Any]:
-        """Create a new collection with the correct embedding function"""
+    def create_collection(self, collection_name: str, embedding_provider=None, embedding_model=None) -> Dict[str, Any]:
+        """Create a new collection with the specified or default embedding function"""
         try:
             client = self.get_client()
             
@@ -183,30 +247,17 @@ class ChromaDBAdmin:
             except:
                 pass  # Collection doesn't exist, which is what we want
             
-            # Create embedding function only if available, otherwise use default
-            embedding_function = None
-            if EMBEDDING_FUNCTIONS_AVAILABLE:
-                try:
-                    # Create HuggingFace embedding function to match the shared config
-                    # This ensures all collections use the same embedding model
-                    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                        model_name="sentence-transformers/all-MiniLM-L6-v2",
-                        device="cpu",
-                        normalize_embeddings=True
-                    )
-                    print(f"✅ Using sentence-transformers/all-MiniLM-L6-v2 embedding function for collection '{collection_name}'")
-                except Exception as e:
-                    print(f"⚠️ Warning: Could not create custom embedding function: {e}")
-                    print("📝 Using default ChromaDB embedding function")
-                    embedding_function = None
+            # Get embedding function based on configuration
+            embedding_function = self.get_dynamic_embedding_function(embedding_provider, embedding_model)
             
-            # Create the collection with or without custom embedding function
             if embedding_function:
+                provider = embedding_provider or (get_config().embedding_provider if SHARED_CONFIG_AVAILABLE else "huggingface")
+                model = embedding_model or (get_config().embedding_model if SHARED_CONFIG_AVAILABLE else "sentence-transformers/all-MiniLM-L6-v2")
                 collection = client.create_collection(
                     name=collection_name,
                     embedding_function=embedding_function
                 )
-                message = f"✅ Collection '{collection_name}' created successfully with sentence-transformers/all-MiniLM-L6-v2 embeddings"
+                message = f"✅ Collection '{collection_name}' created successfully with {provider} embedding model: {model}"
             else:
                 collection = client.create_collection(name=collection_name)
                 message = f"✅ Collection '{collection_name}' created successfully with default embeddings"

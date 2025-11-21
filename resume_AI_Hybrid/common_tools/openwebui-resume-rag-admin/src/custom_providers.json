@@ -1,0 +1,54 @@
+{
+  "llm": {
+    "azure-openai": {
+      "display_name": "Azure OpenAI",
+      "base_url": null,
+      "api_key_env": "AZURE_OPENAI_KEY",
+      "builtin": true
+    },
+    "openai": {
+      "display_name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "builtin": true
+    },
+    "anthropic": {
+      "display_name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "builtin": true
+    },
+    "ollama": {
+      "display_name": "Ollama (Local)",
+      "base_url": "http://localhost:11434/v1",
+      "api_key_env": null,
+      "builtin": false
+    },
+    "ollama-cloud": {
+      "display_name": "Ollama Cloud",
+      "base_url": "https://ollama.com",
+      "api_key_env": "OLLAMA_API_KEY",
+      "builtin": false
+    }
+  },
+  "embedding": {
+    "huggingface": {
+      "display_name": "HuggingFace Transformers",
+      "base_url": null,
+      "api_key_env": "HUGGINGFACE_API_KEY",
+      "builtin": true
+    },
+    "azure-openai": {
+      "display_name": "Azure OpenAI",
+      "base_url": null,
+      "api_key_env": "AZURE_OPENAI_KEY",
+      "builtin": true
+    },
+    "openai": {
+      "display_name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "builtin": true
+    }
+  }
+}
