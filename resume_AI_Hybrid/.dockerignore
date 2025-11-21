@@ -1,0 +1,60 @@
+# Docker ignore file for Resume RAG Application
+# Ignore Python cache and virtual environment
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore logs
+*.log
+logs/
+
+# Ignore temporary files
+*.tmp
+*.temp
+
+# Ignore local database files (they should be mounted or use external storage)
+resume_vectordb/
+*.sqlite3
+*.db
+
+# Ignore test files
+test_*.py
+*_test.py
+tests/
+
+# Ignore environment files (should be set via Azure App Service configuration)
+.env
+.env.local
+.env.production
+
+# Ignore documentation
+*.md
+docs/
+
+# Ignore Git
+.git/
+.gitignore
+
+# Ignore node_modules if any
+node_modules/
+
+# Ignore backup files
+*.bak
+*.backup

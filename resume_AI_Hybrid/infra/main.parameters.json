@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "value": "resume-rag-app"
+    },
+    "location": {
+      "value": "East US"
+    },
+    "appServicePlanSku": {
+      "value": "B1"
+    },
+    "azureOpenAiEndpoint": {
+      "value": "YOUR_AZURE_OPENAI_ENDPOINT"
+    },
+    "azureOpenAiKey": {
+      "value": "YOUR_AZURE_OPENAI_KEY"
+    },
+    "azureOpenAiDeployment": {
+      "value": "gpt-4"
+    },
+    "azureOpenAiApiVersion": {
+      "value": "2024-02-15-preview"
+    },
+    "dockerImageName": {
+      "value": "resume-rag-app"
+    },
+    "dockerImageTag": {
+      "value": "latest"
+    }
+  }
+}

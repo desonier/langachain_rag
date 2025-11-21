@@ -22,6 +22,18 @@ python-dotenv
 streamlit
 pandas
 
-# Additional utilities
+# Web server
 flask
+gunicorn
+
+# ML and embeddings
 sentence-transformers
+
+# HTTP client
+requests
+
+# Monitoring and logging
+applicationinsights
+
+# File handling
+pathlib2

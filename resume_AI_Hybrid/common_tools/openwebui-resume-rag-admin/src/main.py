@@ -1358,7 +1358,12 @@ if __name__ == '__main__':
         sys.exit(1)
     
     try:
-        app.run(debug=False, port=5001, host='127.0.0.1', use_reloader=False)
+        # Get port from environment variable for Azure App Service compatibility
+        port = int(os.getenv('PORT', 5001))
+        host = '0.0.0.0'  # Bind to all interfaces for container deployment
+        
+        print(f"🚀 Starting Flask app on {host}:{port}")
+        app.run(debug=False, port=port, host=host, use_reloader=False)
     except KeyboardInterrupt:
         print("\n🛑 KeyboardInterrupt received")
     except Exception as e:

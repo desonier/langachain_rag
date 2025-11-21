@@ -643,7 +643,7 @@
             .then(data => {
                 if (data.total_collections !== undefined) {
                     document.getElementById('totalCollections').textContent = data.total_collections;
-                    document.getElementById('totalDocuments').textContent = data.total_items || 0;
+                    document.getElementById('totalDocuments').textContent = data.total_documents || 0;
                     document.getElementById('databaseSize').textContent = data.database_size || 'Unknown';
                     if (data.last_updated) {
                         document.getElementById('lastUpdated').textContent = data.last_updated.substring(0, 10);

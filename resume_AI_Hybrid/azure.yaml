@@ -1,0 +1,8 @@
+name: resume-rag-app
+metadata:
+  template: minimal
+services:
+  web:
+    project: .
+    language: python
+    host: containerapp

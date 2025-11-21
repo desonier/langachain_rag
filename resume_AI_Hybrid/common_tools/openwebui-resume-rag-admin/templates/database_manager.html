@@ -617,7 +617,7 @@
                         // Update with real data
                         document.getElementById('databasePath').textContent = data.database_path || 'Unknown';
                         document.getElementById('totalCollections').textContent = data.total_collections || 0;
-                        document.getElementById('totalDocuments').textContent = data.total_items || 0;
+                        document.getElementById('totalDocuments').textContent = data.total_documents || 0;
                         
                         // Update last operations
                         const lastUpdated = data.last_updated ? new Date(data.last_updated).toLocaleString() : 'Never';
