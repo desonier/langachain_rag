@@ -6,16 +6,11 @@
   },
   "llm": {
     "azure-openai": [
-      "resumemodel",
-      "my-custom-gpt-model"
+      "resumemodel"
     ],
-    "ollama": [
-      "gpt-oss:7b"
-    ],
+    "ollama": [],
     "ollama-cloud": [
-      "gpt-oss:120b-cloud",
-      "llama3.2:11b-cloud",
-      "llama3.1:8b-cloud"
+      "gpt-oss:120b-cloud"
     ]
   }
 }

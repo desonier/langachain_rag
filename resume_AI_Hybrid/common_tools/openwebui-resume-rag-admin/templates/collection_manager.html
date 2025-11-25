@@ -320,6 +320,17 @@
                             <textarea class="form-control" id="collectionDescription" rows="3" 
                                       placeholder="Describe what this collection will contain..."></textarea>
                         </div>
+                        <div class="mb-3">
+                            <label for="embeddingModelSelect" class="form-label">
+                                <i class="fas fa-vector-square"></i> Embedding Model
+                            </label>
+                            <select class="form-select" id="embeddingModelSelect">
+                                <option value="">Loading models...</option>
+                            </select>
+                            <div class="form-text">
+                                <small id="embeddingProviderInfo" class="text-muted">Select an embedding model for document processing</small>
+                            </div>
+                        </div>
                     </form>
                 </div>
                 <div class="modal-footer">
@@ -385,12 +396,78 @@
             const modal = new bootstrap.Modal(document.getElementById('createCollectionModal'));
             document.getElementById('collectionName').value = '';
             document.getElementById('collectionDescription').value = '';
+            loadAvailableEmbeddingModels();
             modal.show();
+        }
+        
+        function loadAvailableEmbeddingModels() {
+            fetch('/api/providers')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        populateEmbeddingModels(data.providers.embedding_providers, data.providers.current_configuration);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading embedding models:', error);
+                    document.getElementById('embeddingModelSelect').innerHTML = '<option value="">Error loading models</option>';
+                });
+        }
+        
+        function populateEmbeddingModels(embeddingProviders, currentConfig) {
+            const embeddingSelect = document.getElementById('embeddingModelSelect');
+            embeddingSelect.innerHTML = '<option value="">Select Embedding Model...</option>';
+            
+            Object.keys(embeddingProviders).forEach(providerId => {
+                const provider = embeddingProviders[providerId];
+                if (provider.models && provider.models.length > 0) {
+                    // Add optgroup for each provider
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = provider.display_name;
+                    
+                    provider.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = `${providerId}:${model}`;
+                        option.textContent = model;
+                        optgroup.appendChild(option);
+                    });
+                    
+                    embeddingSelect.appendChild(optgroup);
+                }
+            });
+            
+            // Set current selection from configuration
+            if (currentConfig.embedding_provider && currentConfig.embedding_model) {
+                const optionValue = `${currentConfig.embedding_provider}:${currentConfig.embedding_model}`;
+                embeddingSelect.value = optionValue;
+                updateEmbeddingModelInfo(optionValue, embeddingProviders);
+            }
+            
+            // Update model info when selection changes
+            embeddingSelect.addEventListener('change', function() {
+                updateEmbeddingModelInfo(this.value, embeddingProviders);
+            });
+        }
+        
+        function updateEmbeddingModelInfo(selectedValue, embeddingProviders) {
+            const infoElement = document.getElementById('embeddingProviderInfo');
+            if (selectedValue && selectedValue !== '') {
+                const [providerId, modelName] = selectedValue.split(':');
+                const provider = embeddingProviders[providerId];
+                if (provider) {
+                    infoElement.textContent = `${provider.display_name} - ${modelName}`;
+                } else {
+                    infoElement.textContent = 'Select an embedding model for document processing';
+                }
+            } else {
+                infoElement.textContent = 'Select an embedding model for document processing';
+            }
         }
 
         function createCollection() {
             const name = document.getElementById('collectionName').value.trim();
             const description = document.getElementById('collectionDescription').value.trim();
+            const embeddingModel = document.getElementById('embeddingModelSelect').value;
             
             if (!name) {
                 alert('Please enter a collection name');
@@ -405,15 +482,24 @@
             
             showLoading();
             
+            const requestBody = {
+                name: name,
+                description: description
+            };
+            
+            // Add embedding model if selected
+            if (embeddingModel && embeddingModel !== '') {
+                const [provider, model] = embeddingModel.split(':');
+                requestBody.embedding_provider = provider;
+                requestBody.embedding_model = model;
+            }
+            
             fetch('/api/collections', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    name: name,
-                    description: description
-                })
+                body: JSON.stringify(requestBody)
             })
             .then(response => response.json())
             .then(data => {

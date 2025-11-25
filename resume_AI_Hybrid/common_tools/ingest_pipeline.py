@@ -580,6 +580,8 @@ class ResumeIngestPipeline:
             "Source": f"{file_extension} resume",
             "file_path": file_path,  # Keep actual file path for processing
             "original_file_source": os.path.abspath(best_original),  # Use clean original name
+            "original_title": original_filename if original_filename else os.path.basename(file_path),  # Store the original upload name
+            "original_file_path": os.path.abspath(file_path) if os.path.exists(file_path) else file_path,  # Store path to original file
             "display_filename": file_name,  # Clean filename for UI display
             "content_type": "resume",
             "file_format": file_extension,

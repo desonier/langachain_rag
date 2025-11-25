@@ -28,11 +28,14 @@ class SharedConfig:
         self.azure_openai_deployment = os.getenv("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
         
         # Embedding Configuration
-        self.embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+        self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "huggingface")  # huggingface, azure-openai, openai
+        self.embedding_model = self._get_embedding_model()
         self.embedding_device = "cpu"
         self.normalize_embeddings = True
         
         # LLM Configuration
+        self.llm_provider = os.getenv("LLM_PROVIDER", "azure-openai")  # azure-openai, openai, anthropic
+        self.llm_model = self._get_llm_model()
         self.llm_temperature = 0.1
         self.disable_search_enhancement = True
         
@@ -69,6 +72,74 @@ class SharedConfig:
         default_path = self.project_root / "resume_vectordb"
         print(f"📁 Using default database path: {default_path}")
         return default_path.absolute()
+    
+    def _get_embedding_model(self):
+        """Get embedding model based on provider"""
+        provider = self.embedding_provider.lower()
+        
+        if provider == "huggingface":
+            return os.getenv("HUGGINGFACE_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        elif provider == "azure-openai":
+            return os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002")
+        elif provider == "openai":
+            return os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002")
+        else:
+            return "sentence-transformers/all-MiniLM-L6-v2"  # fallback
+    
+    def _get_llm_model(self):
+        """Get LLM model based on provider"""
+        provider = self.llm_provider.lower()
+        
+        if provider == "azure-openai":
+            return self.azure_openai_deployment or "gpt-4"
+        elif provider == "openai":
+            return os.getenv("OPENAI_MODEL", "gpt-4")
+        elif provider == "anthropic":
+            return os.getenv("ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
+        else:
+            return self.azure_openai_deployment or "gpt-4"  # fallback
+    
+    def get_available_embedding_providers(self):
+        """Get list of available embedding providers"""
+        return [
+            {"id": "huggingface", "name": "HuggingFace Transformers", "models": [
+                "sentence-transformers/all-MiniLM-L6-v2",
+                "sentence-transformers/all-mpnet-base-v2",
+                "sentence-transformers/paraphrase-MiniLM-L6-v2"
+            ]},
+            {"id": "azure-openai", "name": "Azure OpenAI", "models": [
+                "text-embedding-ada-002",
+                "text-embedding-3-small",
+                "text-embedding-3-large"
+            ]},
+            {"id": "openai", "name": "OpenAI", "models": [
+                "text-embedding-ada-002",
+                "text-embedding-3-small", 
+                "text-embedding-3-large"
+            ]}
+        ]
+    
+    def get_available_llm_providers(self):
+        """Get list of available LLM providers"""
+        return [
+            {"id": "azure-openai", "name": "Azure OpenAI", "models": [
+                "gpt-4",
+                "gpt-4-turbo",
+                "gpt-35-turbo",
+                "gpt-4o"
+            ]},
+            {"id": "openai", "name": "OpenAI", "models": [
+                "gpt-4",
+                "gpt-4-turbo-preview",
+                "gpt-3.5-turbo",
+                "gpt-4o"
+            ]},
+            {"id": "anthropic", "name": "Anthropic", "models": [
+                "claude-3-sonnet-20240229",
+                "claude-3-opus-20240229",
+                "claude-3-haiku-20240307"
+            ]}
+        ]
     
     def _validate_config(self):
         """Validate required configuration"""
@@ -146,6 +217,14 @@ class SharedConfig:
         print(f"   Deployment: {azure_config['deployment'] or '❌ Not set'}")
         print(f"   API Version: {azure_config['api_version']}")
         
+        # Model configuration
+        print(f"\n🤖 Model Configuration:")
+        print(f"   LLM Provider: {self.llm_provider}")
+        print(f"   LLM Model: {self.llm_model}")
+        print(f"   Embedding Provider: {self.embedding_provider}")
+        print(f"   Embedding Model: {self.embedding_model}")
+        print(f"   Temperature: {self.llm_temperature}")
+        
         # Validation
         print(f"\n✅ Configuration Status: {'Valid' if self.is_valid() else 'Invalid'}")
         if not self.is_valid():
@@ -172,7 +251,7 @@ def get_azure_llm_config():
         "azure_endpoint": config.azure_openai_endpoint,
         "api_key": config.azure_openai_key,
         "api_version": config.azure_openai_api_version,
-        "deployment_name": config.azure_openai_deployment,
+        "azure_deployment": config.azure_openai_deployment,  # Fixed: was 'deployment_name', should be 'azure_deployment'
         "temperature": config.llm_temperature,
         "model_kwargs": {
             "extra_headers": {
@@ -188,6 +267,65 @@ def get_embedding_config():
         "model_kwargs": {"device": config.embedding_device},
         "encode_kwargs": {"normalize_embeddings": config.normalize_embeddings}
     }
+
+def get_dynamic_llm_config(provider=None, model=None):
+    """Get LLM configuration for specified provider and model"""
+    provider = provider or config.llm_provider
+    model = model or config.llm_model
+    
+    if provider == "azure-openai":
+        return {
+            "azure_endpoint": config.azure_openai_endpoint,
+            "api_key": config.azure_openai_key,
+            "api_version": config.azure_openai_api_version,
+            "azure_deployment": model,  # Fixed: was 'deployment_name', should be 'azure_deployment'
+            "temperature": config.llm_temperature,
+            "model_kwargs": {
+                "extra_headers": {
+                    "ms-azure-ai-chat-enhancements-disable-search": "true"
+                }
+            } if config.disable_search_enhancement else {}
+        }
+    elif provider == "openai":
+        return {
+            "model": model,
+            "api_key": os.getenv("OPENAI_API_KEY"),
+            "temperature": config.llm_temperature
+        }
+    elif provider == "anthropic":
+        return {
+            "model": model,
+            "api_key": os.getenv("ANTHROPIC_API_KEY"),
+            "temperature": config.llm_temperature
+        }
+    else:
+        return get_azure_llm_config()  # fallback
+
+def get_dynamic_embedding_config(provider=None, model=None):
+    """Get embedding configuration for specified provider and model"""
+    provider = provider or config.embedding_provider
+    model = model or config.embedding_model
+    
+    if provider == "huggingface":
+        return {
+            "model_name": model,
+            "model_kwargs": {"device": config.embedding_device},
+            "encode_kwargs": {"normalize_embeddings": config.normalize_embeddings}
+        }
+    elif provider == "azure-openai":
+        return {
+            "azure_endpoint": config.azure_openai_endpoint,
+            "api_key": config.azure_openai_key,
+            "api_version": config.azure_openai_api_version,
+            "model": model
+        }
+    elif provider == "openai":
+        return {
+            "api_key": os.getenv("OPENAI_API_KEY"),
+            "model": model
+        }
+    else:
+        return get_embedding_config()  # fallback
 
 if __name__ == "__main__":
     # Print configuration when run directly

@@ -50,15 +50,86 @@
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(0,0,0,0.1);
         }
+        .border-left-success {
+            border-left: 4px solid #28a745 !important;
+        }
+        .border-left-warning {
+            border-left: 4px solid #ffc107 !important;
+        }
+        .border-left-danger {
+            border-left: 4px solid #dc3545 !important;
+        }
         .score-badge {
             font-size: 0.9rem;
             padding: 0.5rem 1rem;
             border-radius: 20px;
             font-weight: bold;
         }
-        .score-high { background: #d4edda; color: #155724; }
-        .score-medium { background: #fff3cd; color: #856404; }
-        .score-low { background: #f8d7da; color: #721c24; }
+        .badge-lg {
+            font-size: 1rem;
+            padding: 0.6rem 1.2rem;
+        }
+        .resume-link {
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .resume-link:hover {
+            text-decoration: underline;
+        }
+        .key-extracts {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        .key-extracts table td {
+            border: none;
+            padding: 0.3rem 0.5rem;
+        }
+        .resume-ranking-card {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .resume-title-with-score {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+        .score-inline {
+            font-size: 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        .justification-summary {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 6px;
+            border-left: 3px solid #007bff;
+        }
+        .key-extracts-table .table {
+            margin-bottom: 0;
+        }
+        .key-extracts-table .table th {
+            background-color: #f8f9fa;
+            border-top: none;
+            font-weight: 600;
+        }
+        .extract-text {
+            line-height: 1.4;
+            font-size: 0.9rem;
+        }
+        .collection-results-header {
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+        }
+        .border-left-primary {
+            border-left: 4px solid #007bff !important;
+        }
         .breadcrumb-banner {
             background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%);
             border-left: 4px solid #007bff;
@@ -202,6 +273,33 @@
                                     </select>
                                 </div>
                             </div>
+                            
+                            <!-- Model Selection -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">
+                                        <i class="fas fa-brain"></i> LLM Model
+                                    </label>
+                                    <select class="form-select" id="llmModelSelect">
+                                        <option value="">Loading models...</option>
+                                    </select>
+                                    <div class="form-text">
+                                        <small id="modelProviderInfo" class="text-muted">Select a model for query processing</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">
+                                        <i class="fas fa-sliders-h"></i> Temperature
+                                    </label>
+                                    <select class="form-select" id="temperatureSelect">
+                                        <option value="0.1">0.1 - Very Focused</option>
+                                        <option value="0.3">0.3 - Focused</option>
+                                        <option value="0.5">0.5 - Balanced</option>
+                                        <option value="0.7" selected>0.7 - Creative</option>
+                                        <option value="0.9">0.9 - Very Creative</option>
+                                    </select>
+                                </div>
+                            </div>
 
                             <!-- Resume Count Status Box -->
                             <div class="row mb-3" id="statusRow" style="display: none;">
@@ -287,6 +385,66 @@
             const examples = document.getElementById('queryExamples');
             examples.style.display = examples.style.display === 'none' ? 'block' : 'none';
         }
+        
+        function loadAvailableModels() {
+            fetch('/api/providers')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        populateLLMModels(data.providers.llm_providers);
+                        // Set current selection from configuration
+                        const currentConfig = data.providers.current_configuration;
+                        if (currentConfig.llm_provider && currentConfig.llm_model) {
+                            const llmSelect = document.getElementById('llmModelSelect');
+                            const optionValue = `${currentConfig.llm_provider}:${currentConfig.llm_model}`;
+                            llmSelect.value = optionValue;
+                        }
+                        if (currentConfig.temperature) {
+                            document.getElementById('temperatureSelect').value = currentConfig.temperature;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading models:', error);
+                    document.getElementById('llmModelSelect').innerHTML = '<option value="">Error loading models</option>';
+                });
+        }
+        
+        function populateLLMModels(llmProviders) {
+            const llmSelect = document.getElementById('llmModelSelect');
+            llmSelect.innerHTML = '<option value="">Select LLM Model...</option>';
+            
+            Object.keys(llmProviders).forEach(providerId => {
+                const provider = llmProviders[providerId];
+                if (provider.models && provider.models.length > 0) {
+                    // Add optgroup for each provider
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = provider.display_name;
+                    
+                    provider.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = `${providerId}:${model}`;
+                        option.textContent = model;
+                        optgroup.appendChild(option);
+                    });
+                    
+                    llmSelect.appendChild(optgroup);
+                }
+            });
+            
+            // Update model info when selection changes
+            llmSelect.addEventListener('change', function() {
+                const selectedValue = this.value;
+                const infoElement = document.getElementById('modelProviderInfo');
+                if (selectedValue) {
+                    const [providerId, modelName] = selectedValue.split(':');
+                    const provider = llmProviders[providerId];
+                    infoElement.textContent = `${provider.display_name} - ${modelName}`;
+                } else {
+                    infoElement.textContent = 'Select a model for query processing';
+                }
+            });
+        }
 
         async function updateResumeCount() {
             const collectionSelect = document.getElementById('collectionSelect');
@@ -358,6 +516,7 @@
             }
             
             updateResumeCount();
+            loadAvailableModels();
         });
 
         document.getElementById('queryForm').addEventListener('submit', async function(e) {
@@ -372,6 +531,8 @@
             const collection = document.getElementById('collectionSelect').value || null;
             const queryType = document.getElementById('queryTypeSelect').value;
             const maxResults = document.getElementById('maxResults').value;
+            const selectedModel = document.getElementById('llmModelSelect').value;
+            const temperature = document.getElementById('temperatureSelect').value;
 
             // Show loading spinner
             document.querySelector('.loading-spinner').style.display = 'block';
@@ -387,7 +548,9 @@
                         query: queryText,
                         collection: collection,
                         query_type: queryType,
-                        max_results: parseInt(maxResults)
+                        max_results: parseInt(maxResults),
+                        model: selectedModel,
+                        temperature: parseFloat(temperature)
                     })
                 });
 
@@ -427,12 +590,33 @@
 
             result.results.forEach((collectionResult) => {
                 if (collectionResult.error) {
+                    // Determine error type and styling
+                    let errorClass = 'alert-danger';
+                    let errorIcon = 'fas fa-exclamation-circle';
+                    let helpText = '';
+                    
+                    if (collectionResult.error.includes('sentence_transformers') || 
+                        collectionResult.error.includes('Missing dependency')) {
+                        errorClass = 'alert-warning';
+                        errorIcon = 'fas fa-download';
+                        helpText = '<small class="d-block mt-2"><strong>Fix:</strong> Install the missing package by running <code>pip install sentence_transformers</code> in your terminal, then restart the application.</small>';
+                    } else if (collectionResult.error.includes('langchain_huggingface')) {
+                        errorClass = 'alert-warning';
+                        errorIcon = 'fas fa-download';
+                        helpText = '<small class="d-block mt-2"><strong>Fix:</strong> Install the missing package by running <code>pip install langchain_huggingface</code> in your terminal, then restart the application.</small>';
+                    } else if (collectionResult.error.includes('Embedding') && collectionResult.error.includes('dependency')) {
+                        errorClass = 'alert-warning';
+                        errorIcon = 'fas fa-cogs';
+                        helpText = '<small class="d-block mt-2"><strong>Fix:</strong> Check that all required embedding packages are installed and restart the application.</small>';
+                    }
+                    
                     html += `
                         <div class="row mb-4">
                             <div class="col-12">
-                                <div class="alert alert-danger">
-                                    <h6><i class="fas fa-exclamation-circle"></i> Error in collection: ${collectionResult.collection}</h6>
+                                <div class="alert ${errorClass}">
+                                    <h6><i class="${errorIcon}"></i> Error in collection: ${collectionResult.collection}</h6>
                                     <p class="mb-0">${collectionResult.error}</p>
+                                    ${helpText}
                                 </div>
                             </div>
                         </div>
@@ -440,18 +624,105 @@
                     return;
                 }
 
-                html += `
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <div class="result-card p-4">
-                                <h5><i class="fas fa-lightbulb text-primary"></i> Answer from ${collectionResult.collection}</h5>
-                                <p class="mb-0">${collectionResult.response}</p>
-                            </div>
-                        </div>
-                    </div>
-                `;
-
                 if (collectionResult.sources && collectionResult.sources.length > 0) {
+                    // Check if this is enhanced scoring results
+                    const hasScoring = collectionResult.response_type === 'enhanced_scoring' || 
+                                     collectionResult.sources.some(s => s.hasOwnProperty('score'));
+                    
+                    if (hasScoring) {
+                        // Enhanced scoring display - exact format requested
+                        html += `
+                            <div class="row mb-4">
+                                <div class="col-12">
+                                    <div class="collection-results-header p-3 bg-light border-left-primary">
+                                        <h4 class="mb-1"><i class="fas fa-trophy text-warning"></i> Resume Rankings</h4>
+                                        <p class="text-muted mb-0">
+                                            <i class="fas fa-database"></i> Collection: <strong>${collectionResult.collection}</strong> | 
+                                            <i class="fas fa-users"></i> ${collectionResult.total_candidates || collectionResult.sources.length} candidates found | 
+                                            <i class="fas fa-sort-amount-down"></i> Ranked by relevance score (highest first)
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+
+                        collectionResult.sources.forEach((candidate, index) => {
+                            const score = candidate.score || 0;
+                            const scoreColor = score >= 80 ? 'success' : score >= 60 ? 'warning' : 'danger';
+                            
+                            // Handle both new and legacy resume formats
+                            const candidateName = candidate.candidate_name || 'Resume Candidate';
+                            const originalTitle = candidate.original_title || candidate.original_filename;
+                            const filePath = candidate.original_file_path || candidate.original_filename;
+                            
+                            // Use the original_filename as the identifier for the resume viewer
+                            const viewerIdentifier = candidate.original_filename;
+                            
+                            html += `
+                                <div class="row mb-4">
+                                    <div class="col-12">
+                                        <div class="resume-ranking-card">
+                                            <!-- Resume Title with Score on Same Line -->
+                                            <h5 class="resume-title-with-score mb-2">
+                                                <a href="#" class="resume-link text-primary" 
+                                                   data-filename="${viewerIdentifier}" 
+                                                   data-filepath="${filePath}"
+                                                   data-collection="${candidate.collection}"
+                                                   onclick="openResumeViewer('${viewerIdentifier}', '${candidate.collection}', '${filePath}')">
+                                                    <i class="fas fa-user-tie"></i> ${candidateName}
+                                                </a>
+                                                <span class="score-inline badge badge-${scoreColor} ml-3">${score}/100</span>
+                                            </h5>
+                                            
+                                            <!-- Justification Summary Under Title -->
+                                            <div class="justification-summary mb-3">
+                                                <p class="text-muted mb-0">
+                                                    <strong>Ranking Justification:</strong> ${candidate.justification || 'No justification provided'}
+                                                </p>
+                                            </div>
+                                            
+                                            <!-- Key Extracts Table Under Justification -->
+                                            ${candidate.key_extracts && candidate.key_extracts.length > 0 ? `
+                                                <div class="key-extracts-table">
+                                                    <h6 class="mb-2"><i class="fas fa-table text-info"></i> Key Extracts Contributing to Score:</h6>
+                                                    <div class="table-responsive">
+                                                        <table class="table table-sm table-bordered">
+                                                            <thead class="thead-light">
+                                                                <tr>
+                                                                    <th style="width: 60px;">#</th>
+                                                                    <th>Extract from Resume</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                ${candidate.key_extracts.map((extract, i) => 
+                                                                    `<tr>
+                                                                        <td class="text-center font-weight-bold">${i + 1}</td>
+                                                                        <td class="extract-text">${extract}</td>
+                                                                    </tr>`
+                                                                ).join('')}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            ` : '<p class="text-muted small">No key extracts identified</p>'}
+                                            
+                                            <hr class="my-3">
+                                            
+                                            <!-- Metadata Footer -->
+                                            <div class="candidate-metadata">
+                                                <small class="text-muted">
+                                                    <i class="fas fa-folder"></i> Collection: ${candidate.collection} | 
+                                                    <i class="fas fa-file"></i> Source: ${originalTitle}
+                                                    ${candidate.chunk_count > 1 ? ` (${candidate.chunk_count} chunks)` : ''}
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        // Standard source display (legacy)
                     html += `
                         <div class="row mb-4">
                             <div class="col-12">
@@ -487,6 +758,7 @@
                     });
 
                     html += '</div>';
+                    }
                 }
             });
 
@@ -505,31 +777,51 @@
                                             <thead>
                                                 <tr>
                                                     <th>Metric</th>
-                                                    <th>Count</th>
+                                                    <th>Value</th>
                                                     <th>Details</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
+                                                ${result.token_usage.model_used ? `
+                                                <tr class="bg-light">
+                                                    <td><strong><i class="fas fa-robot text-primary"></i> Model Used</strong></td>
+                                                    <td><span class="badge bg-primary">${result.token_usage.model_used}</span></td>
+                                                    <td>LLM provider and model for this query</td>
+                                                </tr>
+                                                ` : ''}
+                                                ${result.token_usage.temperature !== undefined ? `
                                                 <tr>
-                                                    <td><strong>Tokens Sent</strong></td>
+                                                    <td><strong><i class="fas fa-thermometer-half text-warning"></i> Temperature</strong></td>
+                                                    <td><span class="badge bg-warning text-dark">${result.token_usage.temperature}</span></td>
+                                                    <td>Creativity/randomness setting (0.0-1.0)</td>
+                                                </tr>
+                                                ` : ''}
+                                                ${result.token_usage.prompt_tokens ? `
+                                                <tr>
+                                                    <td><strong><i class="fas fa-arrow-up text-primary"></i> Tokens Sent</strong></td>
                                                     <td><span class="badge bg-primary">${result.token_usage.prompt_tokens}</span></td>
-                                                    <td>Query + context sent to Azure OpenAI</td>
+                                                    <td>Query + context sent to LLM</td>
                                                 </tr>
+                                                ` : ''}
+                                                ${result.token_usage.completion_tokens ? `
                                                 <tr>
-                                                    <td><strong>Tokens Received</strong></td>
+                                                    <td><strong><i class="fas fa-arrow-down text-success"></i> Tokens Received</strong></td>
                                                     <td><span class="badge bg-success">${result.token_usage.completion_tokens}</span></td>
-                                                    <td>Response generated by Azure OpenAI</td>
+                                                    <td>Response generated by LLM</td>
                                                 </tr>
+                                                ` : ''}
+                                                ${result.token_usage.total_tokens ? `
                                                 <tr>
-                                                    <td><strong>Total Tokens</strong></td>
+                                                    <td><strong><i class="fas fa-calculator text-info"></i> Total Tokens</strong></td>
                                                     <td><span class="badge bg-info">${result.token_usage.total_tokens}</span></td>
                                                     <td>Combined input and output tokens</td>
                                                 </tr>
+                                                ` : ''}
                                                 ${result.token_usage.estimated_cost ? `
                                                 <tr>
-                                                    <td><strong>Estimated Cost</strong></td>
+                                                    <td><strong><i class="fas fa-dollar-sign text-warning"></i> Estimated Cost</strong></td>
                                                     <td><span class="badge bg-warning text-dark">$${result.token_usage.estimated_cost.toFixed(4)}</span></td>
-                                                    <td>Approximate cost based on Azure OpenAI pricing</td>
+                                                    <td>Approximate cost based on LLM provider pricing</td>
                                                 </tr>
                                                 ` : ''}
                                             </tbody>
@@ -629,6 +921,13 @@
                     <i class="fas fa-exclamation-circle"></i> <strong>Error:</strong> ${error}
                 </div>
             `;
+        }
+
+        function openResumeViewer(filename, collection, filepath) {
+            // Open resume content in a new window, using filepath if available
+            const targetFile = filepath && filepath !== 'undefined' ? filepath : filename;
+            const url = `/view_resume?filename=${encodeURIComponent(filename)}&collection=${encodeURIComponent(collection)}&filepath=${encodeURIComponent(targetFile)}`;
+            window.open(url, '_blank', 'width=800,height=600,scrollbars=yes,resizable=yes');
         }
     </script>
 </body>

@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Selector - ChromaDB Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Fixed loadConfigurationTables function to resolve timeout issue */
+        async function loadConfigurationTables() {
+            try {
+                console.log('🔄 Loading configuration tables...');
+                
+                // Show loading indicators
+                document.getElementById('llm-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>
+                        Loading configuration...
+                    </td></tr>`;
+                document.getElementById('embedding-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>
+                        Loading configuration...
+                    </td></tr>`;
+                
+                // Create fetch requests with timeout
+                const fetchWithTimeout = (url, timeout = 5000) => {
+                    return Promise.race([
+                        fetch(url),
+                        new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error(`Request timeout (${timeout}ms)`)), timeout)
+                        )
+                    ]);
+                };
+                
+                console.log('📡 Fetching models and providers data...');
+                
+                // Load all configured models with timeout
+                const [modelsResponse, providersResponse] = await Promise.all([
+                    fetchWithTimeout('/api/models/list'),
+                    fetchWithTimeout('/api/providers/list')
+                ]);
+                
+                console.log('✅ Got responses, parsing JSON...');
+                
+                const modelsData = await modelsResponse.json();
+                const providersData = await providersResponse.json();
+                
+                console.log('📊 Models data:', modelsData);
+                console.log('🏢 Providers data:', providersData);
+                
+                if (modelsData.success && providersData.success) {
+                    console.log('🎯 Populating tables...');
+                    populateModelsTable('llm', modelsData.models, providersData.providers);
+                    populateModelsTable('embedding', modelsData.models, providersData.providers);
+                    updateConfigurationCounts(modelsData.models);
+                    console.log('✅ Configuration tables loaded successfully');
+                } else {
+                    console.error('❌ API response error:', modelsData.error || providersData.error);
+                    showError('Failed to load configuration data: ' + (modelsData.error || providersData.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('❌ Error loading configuration:', error);
+                showError('Error loading configuration: ' + error.message);
+                
+                // Show empty tables with error message
+                document.getElementById('llm-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center text-danger py-4">
+                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i><br>
+                        Failed to load configuration data<br>
+                        <small>${error.message}</small>
+                    </td></tr>`;
+                document.getElementById('embedding-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center text-danger py-4">
+                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i><br>
+                        Failed to load configuration data<br>
+                        <small>${error.message}</small>
+                    </td></tr>`;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <h1>Model Selector Test</h1>
+        <p>This is a test file to verify the loadConfigurationTables function works correctly.</p>
+        
+        <!-- LLM Models Table -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-brain"></i> Configured LLM Models</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Model</th>
+                            <th>Type</th>
+                            <th>Test</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="llm-models-tbody">
+                        <tr><td colspan="5" class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>
+                            Loading...
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Embedding Models Table -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-vector-square"></i> Configured Embedding Models</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Model</th>
+                            <th>Type</th>
+                            <th>Test</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="embedding-models-tbody">
+                        <tr><td colspan="5" class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>
+                            Loading...
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <button onclick="loadConfigurationTables()" class="btn btn-primary">Reload Configuration</button>
+    </div>
+
+    <script>
+        // Fixed loadConfigurationTables function
+        async function loadConfigurationTables() {
+            try {
+                console.log('🔄 Loading configuration tables...');
+                
+                // Show loading indicators
+                document.getElementById('llm-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>
+                        Loading configuration...
+                    </td></tr>`;
+                document.getElementById('embedding-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>
+                        Loading configuration...
+                    </td></tr>`;
+                
+                // Create fetch requests with timeout
+                const fetchWithTimeout = (url, timeout = 5000) => {
+                    return Promise.race([
+                        fetch(url),
+                        new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error(`Request timeout (${timeout}ms)`)), timeout)
+                        )
+                    ]);
+                };
+                
+                console.log('📡 Fetching models and providers data...');
+                
+                // Load all configured models with timeout
+                const [modelsResponse, providersResponse] = await Promise.all([
+                    fetchWithTimeout('/api/models/list'),
+                    fetchWithTimeout('/api/providers/list')
+                ]);
+                
+                console.log('✅ Got responses, parsing JSON...');
+                
+                const modelsData = await modelsResponse.json();
+                const providersData = await providersResponse.json();
+                
+                console.log('📊 Models data:', modelsData);
+                console.log('🏢 Providers data:', providersData);
+                
+                if (modelsData.success && providersData.success) {
+                    console.log('🎯 Populating tables...');
+                    populateModelsTable('llm', modelsData.models, providersData.providers);
+                    populateModelsTable('embedding', modelsData.models, providersData.providers);
+                    updateConfigurationCounts(modelsData.models);
+                    console.log('✅ Configuration tables loaded successfully');
+                } else {
+                    console.error('❌ API response error:', modelsData.error || providersData.error);
+                    showError('Failed to load configuration data: ' + (modelsData.error || providersData.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('❌ Error loading configuration:', error);
+                showError('Error loading configuration: ' + error.message);
+                
+                // Show empty tables with error message
+                document.getElementById('llm-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center text-danger py-4">
+                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i><br>
+                        Failed to load configuration data<br>
+                        <small>${error.message}</small>
+                    </td></tr>`;
+                document.getElementById('embedding-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center text-danger py-4">
+                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i><br>
+                        Failed to load configuration data<br>
+                        <small>${error.message}</small>
+                    </td></tr>`;
+            }
+        }
+        
+        function populateModelsTable(modelType, allModels, allProviders) {
+            const tbody = document.getElementById(`${modelType}-models-tbody`);
+            const models = allModels[modelType] || {};
+            let html = '';
+            
+            Object.keys(models).forEach(providerId => {
+                const providerModels = models[providerId] || [];
+                const providerInfo = allProviders[modelType] ? allProviders[modelType][providerId] : {};
+                const providerName = providerInfo.display_name || providerId;
+                
+                if (providerModels.length === 0) {
+                    // Show provider with no models
+                    html += `
+                        <tr>
+                            <td><span class="badge bg-secondary">${providerName}</span></td>
+                            <td class="text-muted fst-italic">No models configured</td>
+                            <td><span class="badge bg-secondary">-</span></td>
+                            <td><span class="badge bg-warning">Empty</span></td>
+                            <td>
+                                <button type="button" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-plus"></i> Add
+                                </button>
+                            </td>
+                        </tr>`;
+                } else {
+                    // Show each model
+                    providerModels.forEach((modelName, index) => {
+                        html += `
+                            <tr>
+                                <td>
+                                    ${index === 0 ? `<span class="badge bg-primary">${providerName}</span>` : ''}
+                                </td>
+                                <td><span class="fw-bold">${modelName}</span></td>
+                                <td>
+                                    <span class="badge ${modelType === 'llm' ? 'bg-success' : 'bg-info'}">
+                                        ${modelType.toUpperCase()}
+                                    </span>
+                                </td>
+                                <td>
+                                    <button type="button" class="btn btn-sm btn-outline-success">
+                                        <i class="fas fa-check"></i>
+                                    </button>
+                                </td>
+                                <td>
+                                    <div class="btn-group" role="group">
+                                        <button type="button" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>`;
+                    });
+                }
+            });
+            
+            if (html === '') {
+                html = `
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            <i class="fas fa-inbox fa-2x mb-2"></i><br>
+                            No ${modelType.toUpperCase()} models configured yet.
+                        </td>
+                    </tr>`;
+            }
+            
+            tbody.innerHTML = html;
+        }
+        
+        function updateConfigurationCounts(allModels) {
+            console.log('📊 Updating configuration counts:', allModels);
+        }
+        
+        function showError(message) {
+            console.error('❌ Error:', message);
+        }
+        
+        // Load configuration when page loads
+        document.addEventListener('DOMContentLoaded', loadConfigurationTables);
+    </script>
+</body>
+</html>

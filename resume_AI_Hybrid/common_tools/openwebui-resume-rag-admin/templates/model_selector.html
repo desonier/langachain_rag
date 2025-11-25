@@ -1,0 +1,2148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Selection - ChromaDB Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .model-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+        }
+        .model-preview {
+            background: #e9ecef;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .provider-badge {
+            display: inline-block;
+            padding: 0.25em 0.6em;
+            font-size: 0.75em;
+            font-weight: 600;
+            line-height: 1;
+            color: #fff;
+            text-align: center;
+            white-space: nowrap;
+            vertical-align: baseline;
+            border-radius: 0.25rem;
+        }
+        .badge-azure { background-color: #0078d4; }
+        .badge-openai { background-color: #10a37f; }
+        .badge-anthropic { background-color: #d97706; }
+        .badge-huggingface { background-color: #ff6b35; }
+        
+        /* Test result styling */
+        .model-test-result {
+            min-height: 0;
+            transition: all 0.3s ease;
+        }
+        
+        .alert-sm {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.875rem;
+            border-radius: 0.25rem;
+            margin-bottom: 0;
+        }
+        
+        .model-test-result .alert {
+            margin-bottom: 0;
+        }
+        
+        /* Configuration card styling */
+        .card {
+            border-radius: 0.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+        }
+        
+        .card-header {
+            border-radius: 0.5rem 0.5rem 0 0 !important;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .card-header h6 {
+            margin: 0;
+            font-weight: 600;
+        }
+        
+        .form-text {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        
+        /* Interactive provider rows */
+        .provider-row {
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }
+        
+        .provider-row:hover {
+            background-color: #f8f9fa;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .provider-row:active {
+            transform: translateY(0);
+            background-color: #e9ecef;
+        }
+        
+        /* Modal styling */
+        .modal-header {
+            border-bottom: 2px solid #007bff;
+        }
+        
+        .provider-config-form {
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        
+        .config-section {
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background: #f8f9fa;
+        }
+        
+        .required-field {
+            border-left: 3px solid #dc3545;
+            padding-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('admin_dashboard') }}">
+                <i class="fas fa-database"></i> ChromaDB Admin
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+                <a class="nav-link" href="{{ url_for('manage_collections') }}">Collections</a>
+                <a class="nav-link" href="{{ url_for('manage_database') }}">Database</a>
+                <a class="nav-link" href="{{ url_for('query_interface') }}">Query</a>
+                <a class="nav-link" href="{{ url_for('stats_viewer') }}">Statistics</a>
+                <a class="nav-link active" href="{{ url_for('manage_models') }}">Models</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1><i class="fas fa-brain"></i> Model Configuration</h1>
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="{{ url_for('admin_dashboard') }}">Dashboard</a></li>
+                            <li class="breadcrumb-item active">Model Selection</li>
+                        </ol>
+                    </nav>
+                </div>
+
+                <!-- Flash Messages -->
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ 'danger' if category == 'error' else 'success' if category == 'success' else 'warning' }} alert-dismissible fade show" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                <!-- Provider and Model Overview Section -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card border-primary">
+                            <div class="card-header bg-primary text-white">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0"><i class="fas fa-list"></i> Available Providers & Models</h5>
+                                    <button type="button" class="btn btn-light btn-sm" data-bs-toggle="collapse" data-bs-target="#providerOverview">
+                                        <i class="fas fa-eye"></i> Toggle View
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="collapse show" id="providerOverview">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <!-- LLM Providers -->
+                                        <div class="col-md-6">
+                                            <h6 class="text-primary"><i class="fas fa-comments"></i> LLM Providers</h6>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-hover">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Provider</th>
+                                                            <th>Available Models</th>
+                                                            <th>Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for provider_id, provider_info in available_providers.get('llm', {}).items() %}
+                                                        <tr>
+                                                            <td>
+                                                                <span class="provider-badge badge-{{ 'azure' if 'azure' in provider_id else 'openai' if 'openai' in provider_id else 'anthropic' if 'anthropic' in provider_id else 'huggingface' }}">
+                                                                    {{ provider_info.get('display_name', provider_id.title()) }}
+                                                                </span>
+                                                            </td>
+                                                            <td>
+                                                                {% set models = custom_models.get('llm', {}).get(provider_id, []) %}
+                                                                {% if models %}
+                                                                    <small>
+                                                                        {% for model in models[:3] %}
+                                                                            <span class="badge bg-secondary me-1">{{ model }}</span>
+                                                                        {% endfor %}
+                                                                        {% if models|length > 3 %}
+                                                                            <span class="text-muted">+{{ models|length - 3 }} more</span>
+                                                                        {% endif %}
+                                                                    </small>
+                                                                {% else %}
+                                                                    <small class="text-muted">No models configured</small>
+                                                                {% endif %}
+                                                            </td>
+                                                            <td>
+                                                                {% if provider_info.get('base_url') %}
+                                                                    <i class="fas fa-link text-info" title="Custom endpoint: {{ provider_info.get('base_url') }}"></i>
+                                                                {% endif %}
+                                                                {% if provider_info.get('api_key_env') %}
+                                                                    <i class="fas fa-key text-warning" title="Requires API key: {{ provider_info.get('api_key_env') }}"></i>
+                                                                {% endif %}
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                        {% if not available_providers.get('llm') %}
+                                                        <tr>
+                                                            <td colspan="3" class="text-center text-muted">
+                                                                <i class="fas fa-info-circle"></i> No custom LLM providers configured. Default providers are always available.
+                                                            </td>
+                                                        </tr>
+                                                        {% endif %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Embedding Providers -->
+                                        <div class="col-md-6">
+                                            <h6 class="text-success"><i class="fas fa-vector-square"></i> Embedding Providers</h6>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-hover">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Provider</th>
+                                                            <th>Available Models</th>
+                                                            <th>Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for provider_id, provider_info in available_providers.get('embedding', {}).items() %}
+                                                        <tr class="provider-row" data-provider-id="{{ provider_id }}" data-provider-type="embedding" data-provider-info='{{ provider_info|tojson }}' style="cursor: pointer;">>
+                                                            <td>
+                                                                <span class="provider-badge badge-{{ 'azure' if 'azure' in provider_id else 'openai' if 'openai' in provider_id else 'anthropic' if 'anthropic' in provider_id else 'huggingface' }}">
+                                                                    {{ provider_info.get('display_name', provider_id.title()) }}
+                                                                </span>
+                                                                {% if provider_info.get('builtin') %}
+                                                                    <span class="badge bg-success ms-1" title="Built-in provider">Built-in</span>
+                                                                {% else %}
+                                                                    <span class="badge bg-info ms-1" title="Custom provider">Custom</span>
+                                                                {% endif %}
+                                                            </td>
+                                                            <td>
+                                                                {% set models = custom_models.get('embedding', {}).get(provider_id, []) %}
+                                                                {% if models %}
+                                                                    <small>
+                                                                        {% for model in models[:2] %}
+                                                                            <span class="badge bg-secondary me-1">{{ model }}</span>
+                                                                        {% endfor %}
+                                                                        {% if models|length > 2 %}
+                                                                            <span class="text-muted">+{{ models|length - 2 }} more</span>
+                                                                        {% endif %}
+                                                                    </small>
+                                                                {% else %}
+                                                                    <small class="text-muted">No models configured</small>
+                                                                {% endif %}
+                                                            </td>
+                                                            <td>
+                                                                {% if provider_info.get('base_url') %}
+                                                                    <i class="fas fa-link text-info" title="Custom endpoint: {{ provider_info.get('base_url') }}"></i>
+                                                                {% endif %}
+                                                                {% if provider_info.get('api_key_env') %}
+                                                                    <i class="fas fa-key text-warning" title="Requires API key: {{ provider_info.get('api_key_env') }}"></i>
+                                                                {% endif %}
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                        {% if not available_providers.get('embedding') %}
+                                                        <tr>
+                                                            <td colspan="3" class="text-center text-muted">
+                                                                <i class="fas fa-info-circle"></i> No custom embedding providers configured. Default providers are always available.
+                                                            </td>
+                                                        </tr>
+                                                        {% endif %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Current Configuration Summary -->
+                                    <div class="row mt-3">
+                                        <div class="col-12">
+                                            <div class="card border-info">
+                                                <div class="card-header bg-info text-white">
+                                                    <div class="d-flex justify-content-between align-items-center">
+                                                        <h6 class="mb-0"><i class="fas fa-cog"></i> Current Configuration & Model Management</h6>
+                                                        <div>
+                                                            <button type="button" class="btn btn-light btn-sm me-2" onclick="refreshConfiguration()" title="Refresh configuration">
+                                                                <i class="fas fa-sync-alt"></i>
+                                                            </button>
+                                                            <button type="button" class="btn btn-light btn-sm" data-bs-toggle="collapse" data-bs-target="#configDetails" title="Toggle details">
+                                                                <i class="fas fa-chevron-down"></i>
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="card-body p-0">
+                                                    <!-- Quick Status Row -->
+                                                    <div class="p-3 bg-light border-bottom">
+                                                        <div class="row">
+                                                            <div class="col-md-6">
+                                                                <p class="mb-1"><strong>Active LLM:</strong> 
+                                                                    <span class="badge bg-primary" id="current-llm-badge">{{ form.llm_provider.data or 'azure-openai' }}:{{ form.llm_model.data or 'resumemodel' }}</span>
+                                                                </p>
+                                                                <p class="mb-1"><strong>Active Embedding:</strong> 
+                                                                    <span class="badge bg-success" id="current-embedding-badge">{{ form.embedding_provider.data or 'huggingface' }}:{{ form.embedding_model.data or 'all-MiniLM-L6-v2' }}</span>
+                                                                </p>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <p class="mb-1"><strong>Total LLM Models:</strong> 
+                                                                    <span class="badge bg-secondary" id="total-llm-count">0</span>
+                                                                </p>
+                                                                <p class="mb-1"><strong>Total Embedding Models:</strong> 
+                                                                    <span class="badge bg-secondary" id="total-embedding-count">0</span>
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <!-- Detailed Configuration Table -->
+                                                    <div class="collapse show" id="configDetails">
+                                                        <div class="p-3">
+                                                            <!-- LLM Models Table -->
+                                                            <div class="mb-4">
+                                                                <h6 class="text-primary border-bottom pb-2"><i class="fas fa-comments"></i> Configured LLM Models</h6>
+                                                                <div class="table-responsive">
+                                                                    <table class="table table-sm table-hover" id="llm-models-table">
+                                                                        <thead class="table-light">
+                                                                            <tr>
+                                                                                <th width="15%">Provider</th>
+                                                                                <th width="35%">Model</th>
+                                                                                <th width="15%">Type</th>
+                                                                                <th width="15%">Status</th>
+                                                                                <th width="20%">Actions</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody id="llm-models-tbody">
+                                                                            <tr>
+                                                                                <td colspan="5" class="text-center text-muted">
+                                                                                    <div class="d-flex justify-content-center align-items-center py-3">
+                                                                                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                                                        Loading LLM models...
+                                                                                    </div>
+                                                                                </td>
+                                                                            </tr>
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <!-- Embedding Models Table -->
+                                                            <div class="mb-3">
+                                                                <h6 class="text-success border-bottom pb-2"><i class="fas fa-vector-square"></i> Configured Embedding Models</h6>
+                                                                <div class="table-responsive">
+                                                                    <table class="table table-sm table-hover" id="embedding-models-table">
+                                                                        <thead class="table-light">
+                                                                            <tr>
+                                                                                <th width="15%">Provider</th>
+                                                                                <th width="35%">Model</th>
+                                                                                <th width="15%">Type</th>
+                                                                                <th width="15%">Status</th>
+                                                                                <th width="20%">Actions</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody id="embedding-models-tbody">
+                                                                            <tr>
+                                                                                <td colspan="5" class="text-center text-muted">
+                                                                                    <div class="d-flex justify-content-center align-items-center py-3">
+                                                                                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                                                        Loading embedding models...
+                                                                                    </div>
+                                                                                </td>
+                                                                            </tr>
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <!-- Configuration Info -->
+                                                            <div class="alert alert-light border mb-0">
+                                                                <div class="d-flex align-items-center justify-content-between">
+                                                                    <div>
+                                                                        <small class="text-muted">
+                                                                            <i class="fas fa-info-circle"></i> 
+                                                                            Configuration is automatically saved and persisted across application restarts.
+                                                                        </small>
+                                                                    </div>
+                                                                    <div>
+                                                                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportConfiguration()" title="Export current configuration">
+                                                                            <i class="fas fa-download"></i> Export
+                                                                        </button>
+                                                                        <button type="button" class="btn btn-sm btn-outline-danger ms-1" onclick="resetAllConfiguration()" title="Reset all configuration">
+                                                                            <i class="fas fa-undo"></i> Reset All
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+                    
+                    <!-- Custom Provider Management Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <div class="card border-info">
+                                <div class="card-header bg-info text-white">
+                                    <h5 class="mb-0"><i class="fas fa-plus-circle"></i> Add Custom Provider</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-3">
+                                            {{ form.custom_provider_name.label(class="form-label") }}
+                                            {{ form.custom_provider_name(class="form-control", placeholder="e.g., ollama") }}
+                                            <div class="form-text">Unique ID (lowercase, hyphens OK)</div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            {{ form.custom_provider_display_name.label(class="form-label") }}
+                                            {{ form.custom_provider_display_name(class="form-control", placeholder="e.g., Ollama") }}
+                                        </div>
+                                        <div class="col-md-2">
+                                            {{ form.custom_provider_type.label(class="form-label") }}
+                                            {{ form.custom_provider_type(class="form-select") }}
+                                        </div>
+                                        <div class="col-md-2">
+                                            {{ form.custom_provider_base_url.label(class="form-label") }}
+                                            {{ form.custom_provider_base_url(class="form-control", placeholder="https://...") }}
+                                        </div>
+                                        <div class="col-md-2">
+                                            {{ form.custom_provider_api_key_env.label(class="form-label") }}
+                                            {{ form.custom_provider_api_key_env(class="form-control", placeholder="API_KEY_VAR") }}
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-12">
+                                            <button type="button" class="btn btn-info" onclick="addCustomProvider()">
+                                                <i class="fas fa-plus"></i> Add Provider
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <!-- LLM Configuration -->
+                        <div class="col-md-6">
+                            <div class="model-card">
+                                <h3><i class="fas fa-comments"></i> Language Model (LLM)</h3>
+                                <p class="text-muted">Select the model for query processing and analysis</p>
+                                
+                                <div class="mb-3">
+                                    {{ form.llm_provider.label(class="form-label") }}
+                                    {{ form.llm_provider(class="form-select", id="llm-provider-select") }}
+                                </div>
+                                
+                                <div class="mb-3">
+                                    {{ form.llm_model.label(class="form-label") }}
+                                    <div class="input-group">
+                                        {{ form.llm_model(class="form-select", id="llm-model-select") }}
+                                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeModel('llm')" title="Remove selected model">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- Custom LLM Model Addition -->
+                                <div class="mb-3">
+                                    <label class="form-label">Add Custom LLM Model</label>
+                                    <div class="input-group">
+                                        {{ form.custom_llm_model_name(class="form-control", id="custom-llm-input") }}
+                                        <button type="button" class="btn btn-outline-success btn-sm" onclick="addModel('llm')" title="Add custom model">
+                                            <i class="fas fa-plus"></i> Add
+                                        </button>
+                                    </div>
+                                    <div class="form-text">Enter a custom model name for the selected provider</div>
+                                </div>
+                                
+                                <!-- LLM Test Button -->
+                                <div class="mb-3">
+                                    <button type="button" 
+                                            class="btn btn-outline-success btn-sm" 
+                                            onclick="testModelConnection('llm')"
+                                            id="llm-test-btn">
+                                        <i class="fas fa-plug"></i> Test LLM Connection
+                                    </button>
+                                    <div class="model-test-result mt-2" id="llm-test-result"></div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    {{ form.temperature.label(class="form-label") }}
+                                    {{ form.temperature(class="form-control", step="0.1", min="0", max="2") }}
+                                    <div class="form-text">Controls randomness. Lower = more focused, Higher = more creative</div>
+                                </div>
+                                
+                                <!-- API Keys for non-Azure providers -->
+                                <div id="openai-key-section" class="mb-3" style="display: none;">
+                                    {{ form.openai_api_key.label(class="form-label") }}
+                                    {{ form.openai_api_key(class="form-control") }}
+                                    <div class="form-text">Leave blank to use environment variable OPENAI_API_KEY</div>
+                                </div>
+                                
+                                <div id="anthropic-key-section" class="mb-3" style="display: none;">
+                                    {{ form.anthropic_api_key.label(class="form-label") }}
+                                    {{ form.anthropic_api_key(class="form-control") }}
+                                    <div class="form-text">Leave blank to use environment variable ANTHROPIC_API_KEY</div>
+                                </div>
+                                
+                                <!-- Azure OpenAI Configuration Section -->
+                                <div id="azure-llm-config" class="mb-3">
+                                    <div class="card border-primary">
+                                        <div class="card-header bg-primary text-white">
+                                            <h6 class="mb-0"><i class="fab fa-microsoft"></i> Azure OpenAI Configuration</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    {{ form.azure_endpoint.label(class="form-label") }}
+                                                    {{ form.azure_endpoint(class="form-control") }}
+                                                </div>
+                                                <div class="col-md-6">
+                                                    {{ form.azure_api_version.label(class="form-label") }}
+                                                    {{ form.azure_api_version(class="form-control") }}
+                                                </div>
+                                            </div>
+                                            <div class="row mt-2">
+                                                <div class="col-md-6">
+                                                    {{ form.azure_api_key.label(class="form-label") }}
+                                                    {{ form.azure_api_key(class="form-control") }}
+                                                    <div class="form-text">Leave blank to use environment variable AZURE_OPENAI_API_KEY</div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    {{ form.azure_llm_deployment.label(class="form-label") }}
+                                                    {{ form.azure_llm_deployment(class="form-control") }}
+                                                    <div class="form-text">Deployment name for LLM model</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- OpenAI Configuration Section -->
+                                <div id="openai-llm-config" class="mb-3" style="display: none;">
+                                    <div class="card border-success">
+                                        <div class="card-header bg-success text-white">
+                                            <h6 class="mb-0"><i class="fas fa-brain"></i> OpenAI Configuration</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    {{ form.openai_base_url.label(class="form-label") }}
+                                                    {{ form.openai_base_url(class="form-control") }}
+                                                </div>
+                                                <div class="col-md-6">
+                                                    {{ form.openai_organization.label(class="form-label") }}
+                                                    {{ form.openai_organization(class="form-control") }}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="model-preview">
+                                    <strong>Current Selection:</strong>
+                                    <span class="provider-badge badge-azure" id="llm-preview-badge">Azure OpenAI</span>
+                                    <span id="llm-preview-model">GPT-4</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Embedding Configuration -->
+                        <div class="col-md-6">
+                            <div class="model-card">
+                                <h3><i class="fas fa-project-diagram"></i> Embedding Model</h3>
+                                <p class="text-muted">Select the model for text vectorization</p>
+                                
+                                <div class="mb-3">
+                                    {{ form.embedding_provider.label(class="form-label") }}
+                                    {{ form.embedding_provider(class="form-select", id="embedding-provider-select") }}
+                                </div>
+                                
+                                <div class="mb-3">
+                                    {{ form.embedding_model.label(class="form-label") }}
+                                    <div class="input-group">
+                                        {{ form.embedding_model(class="form-select", id="embedding-model-select") }}
+                                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeModel('embedding')" title="Remove selected model">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- Custom Embedding Model Addition -->
+                                <div class="mb-3">
+                                    <label class="form-label">Add Custom Embedding Model</label>
+                                    <div class="input-group">
+                                        {{ form.custom_embedding_model_name(class="form-control", id="custom-embedding-input") }}
+                                        <button type="button" class="btn btn-outline-success btn-sm" onclick="addModel('embedding')" title="Add custom model">
+                                            <i class="fas fa-plus"></i> Add
+                                        </button>
+                                    </div>
+                                    <div class="form-text">Enter a custom model name for the selected provider</div>
+                                </div>
+                                
+                                <!-- Embedding Test Button -->
+                                <div class="mb-3">
+                                    <button type="button" 
+                                            class="btn btn-outline-info btn-sm" 
+                                            onclick="testModelConnection('embedding')"
+                                            id="embedding-test-btn">
+                                        <i class="fas fa-project-diagram"></i> Test Embedding Connection
+                                    </button>
+                                    <div class="model-test-result mt-2" id="embedding-test-result"></div>
+                                </div>
+                                
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Note:</strong> Changing embedding models requires reprocessing existing documents 
+                                    or creating a new collection to maintain compatibility.
+                                </div>
+                                
+                                <!-- Azure OpenAI Embedding Configuration -->
+                                <div id="azure-embedding-config" class="mb-3" style="display: none;">
+                                    <div class="card border-primary">
+                                        <div class="card-header bg-primary text-white">
+                                            <h6 class="mb-0"><i class="fab fa-microsoft"></i> Azure OpenAI Embedding Configuration</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-12">
+                                                    {{ form.azure_embedding_deployment.label(class="form-label") }}
+                                                    {{ form.azure_embedding_deployment(class="form-control") }}
+                                                    <div class="form-text">Deployment name for embedding model</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- HuggingFace Embedding Configuration -->
+                                <div id="huggingface-embedding-config" class="mb-3">
+                                    <div class="card border-warning">
+                                        <div class="card-header bg-warning text-dark">
+                                            <h6 class="mb-0"><i class="fas fa-robot"></i> HuggingFace Configuration</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    {{ form.huggingface_api_key.label(class="form-label") }}
+                                                    {{ form.huggingface_api_key(class="form-control") }}
+                                                    <div class="form-text">Optional for inference API rate limits</div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    {{ form.huggingface_endpoint.label(class="form-label") }}
+                                                    {{ form.huggingface_endpoint(class="form-control") }}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Ollama Configuration -->
+                                <div id="ollama-config" class="mb-3">
+                                    <div class="card border-success">
+                                        <div class="card-header bg-success text-white">
+                                            <h6 class="mb-0"><i class="fas fa-llama"></i> Ollama Configuration</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    {{ form.ollama_api_key.label(class="form-label") }}
+                                                    {{ form.ollama_api_key(class="form-control") }}
+                                                    <div class="form-text">Required for Ollama Cloud, optional for local</div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    {{ form.ollama_base_url.label(class="form-label") }}
+                                                    {{ form.ollama_base_url(class="form-control") }}
+                                                    <div class="form-text">Local: http://localhost:11434, Cloud: https://ollama.com</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="model-preview">
+                                    <strong>Current Selection:</strong>
+                                    <span class="provider-badge badge-huggingface" id="embedding-preview-badge">HuggingFace</span>
+                                    <span id="embedding-preview-model">all-MiniLM-L6-v2</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="text-muted">
+                                    <i class="fas fa-info-circle"></i>
+                                    Changes will be applied immediately
+                                </div>
+                                <div>
+                                    <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary me-2">Cancel</a>
+                                    <button type="button" class="btn btn-danger me-2" onclick="deleteModelConfiguration()" title="Delete saved configuration">
+                                        <i class="fas fa-trash"></i> Delete Config
+                                    </button>
+                                    {{ form.submit(class="btn btn-primary") }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Model options for different providers
+        const modelOptions = {
+            llm: {
+                'azure-openai': [
+                    { value: 'resumemodel', text: 'Resume Model (Azure Deployment)' },
+                    { value: 'gpt-4', text: 'GPT-4' },
+                    { value: 'gpt-4-turbo', text: 'GPT-4 Turbo' },
+                    { value: 'gpt-35-turbo', text: 'GPT-3.5 Turbo' },
+                    { value: 'gpt-4o', text: 'GPT-4o' }
+                ],
+                'openai': [
+                    { value: 'gpt-4', text: 'GPT-4' },
+                    { value: 'gpt-4-turbo-preview', text: 'GPT-4 Turbo Preview' },
+                    { value: 'gpt-3.5-turbo', text: 'GPT-3.5 Turbo' },
+                    { value: 'gpt-4o', text: 'GPT-4o' }
+                ],
+                'anthropic': [
+                    { value: 'claude-3-sonnet-20240229', text: 'Claude 3 Sonnet' },
+                    { value: 'claude-3-opus-20240229', text: 'Claude 3 Opus' },
+                    { value: 'claude-3-haiku-20240307', text: 'Claude 3 Haiku' }
+                ]
+            },
+            embedding: {
+                'huggingface': [
+                    { value: 'sentence-transformers/all-MiniLM-L6-v2', text: 'all-MiniLM-L6-v2 (Fast)' },
+                    { value: 'sentence-transformers/all-mpnet-base-v2', text: 'all-mpnet-base-v2 (Better)' },
+                    { value: 'sentence-transformers/paraphrase-MiniLM-L6-v2', text: 'paraphrase-MiniLM-L6-v2' }
+                ],
+                'azure-openai': [
+                    { value: 'text-embedding-ada-002', text: 'Ada-002' },
+                    { value: 'text-embedding-3-small', text: 'Embedding-3-Small' },
+                    { value: 'text-embedding-3-large', text: 'Embedding-3-Large' }
+                ],
+                'openai': [
+                    { value: 'text-embedding-ada-002', text: 'Ada-002' },
+                    { value: 'text-embedding-3-small', text: 'Embedding-3-Small' },
+                    { value: 'text-embedding-3-large', text: 'Embedding-3-Large' }
+                ]
+            }
+        };
+
+        // Load custom models and providers from server
+        async function loadCustomModels() {
+            try {
+                const [modelsResponse, providersResponse] = await Promise.all([
+                    fetch('/api/models/list'),
+                    fetch('/api/providers/list')
+                ]);
+                
+                const modelsData = await modelsResponse.json();
+                const providersData = await providersResponse.json();
+                
+                if (modelsData.success && providersData.success) {
+                    const customModels = modelsData.models;
+                    const customProviders = providersData.providers;
+                    
+                    // Update provider options
+                    updateProviderOptions(customProviders);
+                    
+                    // Add custom models to modelOptions
+                    ['llm', 'embedding'].forEach(modelType => {
+                        if (customModels[modelType]) {
+                            Object.keys(customModels[modelType]).forEach(provider => {
+                                if (!modelOptions[modelType][provider]) {
+                                    modelOptions[modelType][provider] = [];
+                                }
+                                
+                                customModels[modelType][provider].forEach(modelName => {
+                                    // Check if already exists
+                                    const exists = modelOptions[modelType][provider].some(m => m.value === modelName);
+                                    if (!exists) {
+                                        modelOptions[modelType][provider].push({
+                                            value: modelName,
+                                            text: modelName + ' (Custom)',
+                                            custom: true
+                                        });
+                                    }
+                                });
+                            });
+                        }
+                    });
+                    
+                    // Refresh dropdowns
+                    updateModelOptions('llm');
+                    updateModelOptions('embedding');
+                }
+            } catch (error) {
+                console.error('Failed to load custom models/providers:', error);
+            }
+        }
+        
+        function updateProviderOptions(customProviders) {
+            // Update LLM provider select
+            const llmProviderSelect = document.getElementById('llm-provider-select');
+            const embeddingProviderSelect = document.getElementById('embedding-provider-select');
+            
+            // Clear and rebuild LLM providers
+            const currentLlmValue = llmProviderSelect.value;
+            llmProviderSelect.innerHTML = '';
+            
+            Object.keys(customProviders.llm || {}).forEach(providerId => {
+                const provider = customProviders.llm[providerId];
+                const option = document.createElement('option');
+                option.value = providerId;
+                option.textContent = provider.display_name;
+                llmProviderSelect.appendChild(option);
+            });
+            
+            // Restore selection or set default
+            if (currentLlmValue && customProviders.llm[currentLlmValue]) {
+                llmProviderSelect.value = currentLlmValue;
+            } else if (llmProviderSelect.options.length > 0) {
+                llmProviderSelect.selectedIndex = 0;
+            }
+            
+            // Clear and rebuild embedding providers  
+            const currentEmbeddingValue = embeddingProviderSelect.value;
+            embeddingProviderSelect.innerHTML = '';
+            
+            Object.keys(customProviders.embedding || {}).forEach(providerId => {
+                const provider = customProviders.embedding[providerId];
+                const option = document.createElement('option');
+                option.value = providerId;
+                option.textContent = provider.display_name;
+                embeddingProviderSelect.appendChild(option);
+            });
+            
+            // Restore selection or set default
+            if (currentEmbeddingValue && customProviders.embedding[currentEmbeddingValue]) {
+                embeddingProviderSelect.value = currentEmbeddingValue;
+            } else if (embeddingProviderSelect.options.length > 0) {
+                embeddingProviderSelect.selectedIndex = 0;
+            }
+            
+            // Update provider names and badge classes for dynamic providers
+            Object.keys(customProviders.llm || {}).forEach(providerId => {
+                const provider = customProviders.llm[providerId];
+                if (!providerNames[providerId]) {
+                    providerNames[providerId] = provider.display_name;
+                    providerBadgeClasses[providerId] = 'badge-secondary';
+                }
+            });
+            
+            Object.keys(customProviders.embedding || {}).forEach(providerId => {
+                const provider = customProviders.embedding[providerId];
+                if (!providerNames[providerId]) {
+                    providerNames[providerId] = provider.display_name;
+                    providerBadgeClasses[providerId] = 'badge-secondary';
+                }
+            });
+        }
+
+        // Add custom provider function
+        async function addCustomProvider() {
+            const providerName = document.getElementById('custom_provider_name').value.trim();
+            const displayName = document.getElementById('custom_provider_display_name').value.trim();
+            const providerType = document.getElementById('custom_provider_type').value;
+            const baseUrl = document.getElementById('custom_provider_base_url').value.trim();
+            const apiKeyEnv = document.getElementById('custom_provider_api_key_env').value.trim();
+            
+            if (!providerName || !displayName) {
+                showMessage('Provider name and display name are required', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/providers/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: providerName,
+                        display_name: displayName,
+                        type: providerType,
+                        base_url: baseUrl || null,
+                        api_key_env: apiKeyEnv || null
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage(data.message, 'success');
+                    
+                    // Clear the form
+                    document.getElementById('custom_provider_name').value = '';
+                    document.getElementById('custom_provider_display_name').value = '';
+                    document.getElementById('custom_provider_base_url').value = '';
+                    document.getElementById('custom_provider_api_key_env').value = '';
+                    
+                    // Reload providers
+                    await loadCustomModels();
+                } else {
+                    showMessage(`❌ Failed to add provider: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error adding custom provider:', error);
+                showMessage(`❌ Error adding provider: ${error.message}`, 'error');
+            }
+        }
+
+        const providerBadgeClasses = {
+            'azure-openai': 'badge-azure',
+            'openai': 'badge-openai',
+            'anthropic': 'badge-anthropic',
+            'huggingface': 'badge-huggingface'
+        };
+
+        const providerNames = {
+            'azure-openai': 'Azure OpenAI',
+            'openai': 'OpenAI',
+            'anthropic': 'Anthropic',
+            'huggingface': 'HuggingFace'
+        };
+
+        function updateModelOptions(type) {
+            const providerSelect = document.getElementById(`${type}-provider-select`);
+            const modelSelect = document.getElementById(`${type}-model-select`);
+            const provider = providerSelect.value;
+            
+            // Clear existing options
+            modelSelect.innerHTML = '';
+            
+            // Special handling for Ollama Cloud - fetch models dynamically
+            if (provider === 'ollama-cloud' && type === 'llm') {
+                // Check if we have an API key first
+                const ollamaApiKey = document.getElementById('ollama_api_key')?.value;
+                
+                if (!ollamaApiKey || ollamaApiKey.trim() === '') {
+                    // Add placeholder option to prompt for API key
+                    const noKeyOption = document.createElement('option');
+                    noKeyOption.value = '';
+                    noKeyOption.textContent = 'Enter API key to load models';
+                    noKeyOption.disabled = true;
+                    noKeyOption.selected = true;
+                    modelSelect.appendChild(noKeyOption);
+                } else {
+                    // Add loading option
+                    const loadingOption = document.createElement('option');
+                    loadingOption.value = '';
+                    loadingOption.textContent = 'Loading models...';
+                    loadingOption.disabled = true;
+                    loadingOption.selected = true;
+                    modelSelect.appendChild(loadingOption);
+                    
+                    // Fetch models from Ollama Cloud
+                    fetchOllamaCloudModels(modelSelect);
+                }
+            } else {
+                // Add regular options
+                if (modelOptions[type][provider]) {
+                    modelOptions[type][provider].forEach(option => {
+                        const optionElement = document.createElement('option');
+                        optionElement.value = option.value;
+                        optionElement.textContent = option.text;
+                        modelSelect.appendChild(optionElement);
+                    });
+                }
+            }
+            
+            // Update preview
+            updatePreview(type);
+            
+            // Show/hide configuration sections
+            updateConfigSections(type, provider);
+        }
+        
+        async function fetchOllamaCloudModels(modelSelect) {
+            try {
+                // Get API key from the form
+                const ollamaApiKey = document.getElementById('ollama_api_key')?.value;
+                
+                if (!ollamaApiKey || ollamaApiKey.trim() === '') {
+                    // Clear dropdown and show message
+                    modelSelect.innerHTML = '';
+                    const noKeyOption = document.createElement('option');
+                    noKeyOption.value = '';
+                    noKeyOption.textContent = 'Enter API key to load models';
+                    noKeyOption.disabled = true;
+                    noKeyOption.selected = true;
+                    modelSelect.appendChild(noKeyOption);
+                    return;
+                }
+                
+                // Show loading state
+                modelSelect.innerHTML = '';
+                const loadingOption = document.createElement('option');
+                loadingOption.value = '';
+                loadingOption.textContent = 'Loading models...';
+                loadingOption.disabled = true;
+                loadingOption.selected = true;
+                modelSelect.appendChild(loadingOption);
+                
+                const requestData = {
+                    api_key: ollamaApiKey.trim()
+                };
+                
+                console.log('Fetching Ollama Cloud models with API key...');
+                
+                const response = await fetch('/api/ollama-cloud/models', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                const data = await response.json();
+                
+                // Clear loading option
+                modelSelect.innerHTML = '';
+                
+                if (data.success && data.models && data.models.length > 0) {
+                    // Add default option
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = '';
+                    defaultOption.textContent = `Select from ${data.count} available models`;
+                    defaultOption.disabled = true;
+                    defaultOption.selected = true;
+                    modelSelect.appendChild(defaultOption);
+                    
+                    // Add model options
+                    data.models.forEach(model => {
+                        const optionElement = document.createElement('option');
+                        optionElement.value = model.value;
+                        optionElement.textContent = model.text;
+                        if (model.size) {
+                            optionElement.title = `Model size: ${formatBytes(model.size)}`;
+                        }
+                        modelSelect.appendChild(optionElement);
+                    });
+                    
+                    // Store in modelOptions for future use
+                    if (!modelOptions.llm['ollama-cloud']) {
+                        modelOptions.llm['ollama-cloud'] = [];
+                    }
+                    modelOptions.llm['ollama-cloud'] = data.models.map(model => ({
+                        value: model.value,
+                        text: model.text
+                    }));
+                    
+                    console.log(`✅ Loaded ${data.count} Ollama Cloud models for your account`);
+                    showNotification(`✅ Loaded ${data.count} models from your Ollama Cloud account`, 'success');
+                } else if (data.error) {
+                    // Add error option
+                    const errorOption = document.createElement('option');
+                    errorOption.value = '';
+                    errorOption.textContent = 'Authentication failed';
+                    errorOption.disabled = true;
+                    errorOption.selected = true;
+                    modelSelect.appendChild(errorOption);
+                    
+                    // Show specific error message
+                    if (data.error.includes('401') || data.error.includes('unauthorized') || data.error.includes('Invalid')) {
+                        showNotification('❌ Invalid API key. Please check your Ollama Cloud API key.', 'danger');
+                    } else if (data.error.includes('connection') || data.error.includes('timeout')) {
+                        showNotification('❌ Connection failed. Please check your internet connection.', 'danger');
+                    } else {
+                        showNotification(`❌ ${data.error}`, 'danger');
+                    }
+                    
+                    console.error('Ollama Cloud API error:', data.error);
+                } else {
+                    // No models found
+                    const noModelsOption = document.createElement('option');
+                    noModelsOption.value = '';
+                    noModelsOption.textContent = 'No models available';
+                    noModelsOption.disabled = true;
+                    noModelsOption.selected = true;
+                    modelSelect.appendChild(noModelsOption);
+                    
+                    showNotification('⚠️ No models found in your Ollama Cloud account', 'warning');
+                }
+            } catch (error) {
+                console.error('Error fetching Ollama Cloud models:', error);
+                
+                // Clear loading option and show error
+                modelSelect.innerHTML = '';
+                const errorOption = document.createElement('option');
+                errorOption.value = '';
+                errorOption.textContent = 'Error loading models';
+                errorOption.disabled = true;
+                errorOption.selected = true;
+                modelSelect.appendChild(errorOption);
+                
+                showNotification('❌ Failed to connect to Ollama Cloud', 'danger');
+            }
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function updateConfigSections(type, provider) {
+            if (type === 'llm') {
+                // LLM Provider specific sections
+                const openaiKeySection = document.getElementById('openai-key-section');
+                const anthropicKeySection = document.getElementById('anthropic-key-section');
+                const azureLlmConfig = document.getElementById('azure-llm-config');
+                const openaiLlmConfig = document.getElementById('openai-llm-config');
+                
+                // Hide all sections first
+                if (openaiKeySection) openaiKeySection.style.display = 'none';
+                if (anthropicKeySection) anthropicKeySection.style.display = 'none';
+                if (azureLlmConfig) azureLlmConfig.style.display = 'none';
+                if (openaiLlmConfig) openaiLlmConfig.style.display = 'none';
+                
+                // Show relevant sections
+                if (provider === 'azure-openai') {
+                    if (azureLlmConfig) azureLlmConfig.style.display = 'block';
+                } else if (provider === 'openai') {
+                    if (openaiKeySection) openaiKeySection.style.display = 'block';
+                    if (openaiLlmConfig) openaiLlmConfig.style.display = 'block';
+                } else if (provider === 'anthropic') {
+                    if (anthropicKeySection) anthropicKeySection.style.display = 'block';
+                }
+            } else if (type === 'embedding') {
+                // Embedding Provider specific sections
+                const azureEmbeddingConfig = document.getElementById('azure-embedding-config');
+                const huggingfaceEmbeddingConfig = document.getElementById('huggingface-embedding-config');
+                
+                // Hide all sections first
+                if (azureEmbeddingConfig) azureEmbeddingConfig.style.display = 'none';
+                if (huggingfaceEmbeddingConfig) huggingfaceEmbeddingConfig.style.display = 'none';
+                
+                // Show relevant sections
+                if (provider === 'azure-openai') {
+                    if (azureEmbeddingConfig) azureEmbeddingConfig.style.display = 'block';
+                } else if (provider === 'huggingface') {
+                    if (huggingfaceEmbeddingConfig) huggingfaceEmbeddingConfig.style.display = 'block';
+                } else if (provider === 'openai') {
+                    // OpenAI embeddings use same API key as LLM
+                    const openaiKeySection = document.getElementById('openai-key-section');
+                    if (openaiKeySection) openaiKeySection.style.display = 'block';
+                }
+            }
+        }
+
+        function updatePreview(type) {
+            const providerSelect = document.getElementById(`${type}-provider-select`);
+            const modelSelect = document.getElementById(`${type}-model-select`);
+            const badge = document.getElementById(`${type}-preview-badge`);
+            const model = document.getElementById(`${type}-preview-model`);
+            
+            const provider = providerSelect.value;
+            const selectedModel = modelSelect.value;
+            
+            badge.className = `provider-badge ${providerBadgeClasses[provider] || 'badge-secondary'}`;
+            badge.textContent = providerNames[provider] || provider;
+            model.textContent = modelSelect.selectedOptions[0]?.textContent || selectedModel;
+        }
+
+        // Initialize event listeners
+        document.getElementById('llm-provider-select').addEventListener('change', () => updateModelOptions('llm'));
+        document.getElementById('llm-model-select').addEventListener('change', () => updatePreview('llm'));
+        document.getElementById('embedding-provider-select').addEventListener('change', () => updateModelOptions('embedding'));
+        document.getElementById('embedding-model-select').addEventListener('change', () => updatePreview('embedding'));
+
+        // Add API key change listener for Ollama Cloud
+        const ollamaApiKeyField = document.getElementById('ollama_api_key');
+        if (ollamaApiKeyField) {
+            // Add debounced event listener for API key changes
+            let debounceTimer;
+            ollamaApiKeyField.addEventListener('input', function() {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    const currentProvider = document.getElementById('llm-provider-select')?.value;
+                    if (currentProvider === 'ollama-cloud' && this.value.trim()) {
+                        console.log('API key changed, refreshing Ollama Cloud models...');
+                        const modelSelect = document.getElementById('llm-model-select');
+                        if (modelSelect) {
+                            fetchOllamaCloudModels(modelSelect);
+                        }
+                    }
+                }, 1000); // Wait 1 second after user stops typing
+            });
+            
+            // Also trigger on paste events
+            ollamaApiKeyField.addEventListener('paste', function() {
+                setTimeout(() => {
+                    const currentProvider = document.getElementById('llm-provider-select')?.value;
+                    if (currentProvider === 'ollama-cloud' && this.value.trim()) {
+                        console.log('API key pasted, refreshing Ollama Cloud models...');
+                        const modelSelect = document.getElementById('llm-model-select');
+                        if (modelSelect) {
+                            fetchOllamaCloudModels(modelSelect);
+                        }
+                    }
+                }, 100); // Small delay to ensure paste is processed
+            });
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load custom models from server first
+            loadCustomModels().then(() => {
+                updateModelOptions('llm');
+                updateModelOptions('embedding');
+                
+                // Initialize configuration sections
+                const llmProvider = document.getElementById('llm-provider-select').value;
+                const embeddingProvider = document.getElementById('embedding-provider-select').value;
+                updateConfigSections('llm', llmProvider);
+                updateConfigSections('embedding', embeddingProvider);
+                
+                // Load configuration tables
+                loadConfigurationTables();
+            });
+        });
+        
+        // Load and populate configuration tables
+        async function loadConfigurationTables() {
+            try {
+                console.log('🔄 Loading configuration tables...');
+                
+                // Create fetch requests with timeout
+                const fetchWithTimeout = (url, timeout = 10000) => {
+                    return Promise.race([
+                        fetch(url),
+                        new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('Request timeout')), timeout)
+                        )
+                    ]);
+                };
+                
+                console.log('📡 Fetching models and providers data...');
+                
+                // Load all configured models with timeout
+                const [modelsResponse, providersResponse] = await Promise.all([
+                    fetchWithTimeout('/api/models/list'),
+                    fetchWithTimeout('/api/providers/list')
+                ]);
+                
+                console.log('✅ Got responses, parsing JSON...');
+                
+                const modelsData = await modelsResponse.json();
+                const providersData = await providersResponse.json();
+                
+                console.log('📊 Models data:', modelsData);
+                console.log('🏢 Providers data:', providersData);
+                
+                if (modelsData.success && providersData.success) {
+                    console.log('🎯 Populating tables...');
+                    populateModelsTable('llm', modelsData.models, providersData.providers);
+                    populateModelsTable('embedding', modelsData.models, providersData.providers);
+                    updateConfigurationCounts(modelsData.models);
+                    console.log('✅ Configuration tables loaded successfully');
+                } else {
+                    console.error('❌ API response error:', modelsData.error || providersData.error);
+                    showError('Failed to load configuration data: ' + (modelsData.error || providersData.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('❌ Error loading configuration:', error);
+                showError('Error loading configuration: ' + error.message);
+                
+                // Show empty tables with error message
+                document.getElementById('llm-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center text-danger py-4">
+                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i><br>
+                        Failed to load configuration data<br>
+                        <small>${error.message}</small>
+                    </td></tr>`;
+                document.getElementById('embedding-models-tbody').innerHTML = `
+                    <tr><td colspan="5" class="text-center text-danger py-4">
+                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i><br>
+                        Failed to load configuration data<br>
+                        <small>${error.message}</small>
+                    </td></tr>`;
+            }
+        }
+        
+        function populateModelsTable(modelType, allModels, allProviders) {
+            const tbody = document.getElementById(`${modelType}-models-tbody`);
+            const models = allModels[modelType] || {};
+            let html = '';
+            
+            Object.keys(models).forEach(providerId => {
+                const providerModels = models[providerId] || [];
+                const providerInfo = allProviders[modelType] ? allProviders[modelType][providerId] : {};
+                const providerName = providerInfo.display_name || providerId;
+                
+                if (providerModels.length === 0) {
+                    // Show provider with no models
+                    html += `
+                        <tr>
+                            <td>
+                                <span class="provider-badge badge-${getProviderBadgeClass(providerId)}">${providerName}</span>
+                            </td>
+                            <td class="text-muted fst-italic">No models configured</td>
+                            <td><span class="badge bg-secondary">-</span></td>
+                            <td><span class="badge bg-warning">Empty</span></td>
+                            <td>
+                                <button type="button" class="btn btn-sm btn-outline-primary" 
+                                        onclick="addModelToProvider('${providerId}', '${modelType}')" 
+                                        title="Add model to ${providerName}">
+                                    <i class="fas fa-plus"></i> Add
+                                </button>
+                            </td>
+                        </tr>`;
+                } else {
+                    // Show each model
+                    providerModels.forEach((modelName, index) => {
+                        const isCustom = checkIfCustomModel(modelType, providerId, modelName);
+                        const isActive = checkIfActiveModel(modelType, providerId, modelName);
+                        const encodedModel = encodeURIComponent(modelName);
+                        
+                        html += `
+                            <tr class="${isActive ? 'table-success' : ''}" id="model-row-${modelType}-${providerId}-${encodedModel}">
+                                <td>
+                                    ${index === 0 ? `<span class="provider-badge badge-${getProviderBadgeClass(providerId)}">${providerName}</span>` : ''}
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <span class="me-2">${modelName}</span>
+                                        ${isActive ? '<i class="fas fa-star text-warning" title="Currently active model"></i>' : ''}
+                                        ${isCustom ? '<span class="badge bg-info ms-2" title="Custom model">Custom</span>' : '<span class="badge bg-secondary ms-2" title="Built-in model">Built-in</span>'}
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="badge ${modelType === 'llm' ? 'bg-primary' : 'bg-success'}">
+                                        ${modelType.toUpperCase()}
+                                    </span>
+                                </td>
+                                <td>
+                                    <button type="button" class="btn btn-sm ${isActive ? 'btn-success' : 'btn-outline-secondary'}" 
+                                            onclick="testSingleModel('${providerId}', '${modelName}', '${modelType}')" 
+                                            title="Test model connection">
+                                        <i class="fas ${isActive ? 'fa-check' : 'fa-plug'}"></i>
+                                    </button>
+                                </td>
+                                <td>
+                                    <div class="btn-group" role="group">
+                                        <button type="button" class="btn btn-sm btn-outline-primary" 
+                                                onclick="editModel('${providerId}', '${modelName}', '${modelType}')" 
+                                                title="Edit model configuration">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm ${isActive ? 'btn-outline-warning' : 'btn-outline-danger'}" 
+                                                onclick="${isActive ? `showActiveModelWarning('${providerId}', '${modelName}', '${modelType}')` : `deleteModel('${providerId}', '${modelName}', '${modelType}')`}" 
+                                                title="${isActive ? 'Cannot delete active model' : 'Delete model'}" 
+                                                ${isActive ? 'disabled' : ''}>
+                                            <i class="fas ${isActive ? 'fa-exclamation-triangle' : 'fa-trash'}"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>`;
+                    });
+                }
+            });
+            
+            if (html === '') {
+                html = `
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            <i class="fas fa-inbox fa-2x mb-2"></i><br>
+                            No ${modelType.toUpperCase()} models configured yet.<br>
+                            <small>Use the form below to add models.</small>
+                        </td>
+                    </tr>`;
+            }
+            
+            tbody.innerHTML = html;
+        }
+        
+        function updateConfigurationCounts(allModels) {
+            let llmCount = 0;
+            let embeddingCount = 0;
+            
+            // Count LLM models
+            Object.values(allModels.llm || {}).forEach(models => {
+                llmCount += models.length;
+            });
+            
+            // Count embedding models
+            Object.values(allModels.embedding || {}).forEach(models => {
+                embeddingCount += models.length;
+            });
+            
+            document.getElementById('total-llm-count').textContent = llmCount;
+            document.getElementById('total-embedding-count').textContent = embeddingCount;
+        }\n        \n        function getProviderBadgeClass(providerId) {\n            if (providerId.includes('azure')) return 'azure';\n            if (providerId.includes('openai')) return 'openai';\n            if (providerId.includes('anthropic')) return 'anthropic';\n            if (providerId.includes('huggingface')) return 'huggingface';\n            return 'secondary';\n        }\n        \n        function checkIfCustomModel(modelType, providerId, modelName) {\n            // Check if model is in custom models vs built-in\n            const builtInModels = modelOptions[modelType] && modelOptions[modelType][providerId] ? \n                modelOptions[modelType][providerId].filter(m => !m.custom).map(m => m.value) : [];\n            return !builtInModels.includes(modelName);\n        }\n        \n        function checkIfActiveModel(modelType, providerId, modelName) {\n            // Check if this is the currently selected model\n            const currentProvider = document.getElementById(`${modelType}-provider-select`).value;\n            const currentModel = document.getElementById(`${modelType}-model-select`).value;\n            return currentProvider === providerId && currentModel === modelName;\n        }\n        \n        // Action functions\n        function testSingleModel(providerId, modelName, modelType) {\n            showMessage(`Testing ${providerId}:${modelName}...`, 'info');\n            \n            fetch('/api/models/test', {\n                method: 'POST',\n                headers: { 'Content-Type': 'application/json' },\n                body: JSON.stringify({\n                    provider: providerId,\n                    model: modelName,\n                    test_type: modelType\n                })\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    showMessage(`✅ ${providerId}:${modelName} test successful`, 'success');\n                } else {\n                    showMessage(`❌ ${providerId}:${modelName} test failed: ${data.error}`, 'error');\n                }\n            })\n            .catch(error => {\n                showMessage(`❌ Test error: ${error.message}`, 'error');\n            });\n        }\n        \n        function editModel(providerId, modelName, modelType) {\n            const newModelName = prompt(`Edit model name:`, modelName);\n            if (!newModelName || newModelName === modelName) return;\n            \n            // First add new model\n            fetch('/api/models/add', {\n                method: 'POST',\n                headers: { 'Content-Type': 'application/json' },\n                body: JSON.stringify({\n                    type: modelType,\n                    provider: providerId,\n                    name: newModelName\n                })\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    // Then delete old model if it was custom\n                    return fetch('/api/models/delete', {\n                        method: 'POST',\n                        headers: { 'Content-Type': 'application/json' },\n                        body: JSON.stringify({\n                            provider_type: modelType,\n                            provider_id: providerId,\n                            model_name: modelName\n                        })\n                    });\n                } else {\n                    throw new Error(data.error);\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                showMessage(`✅ Model renamed to: ${newModelName}`, 'success');\n                loadConfigurationTables(); // Refresh tables\n                loadCustomModels(); // Refresh dropdowns\n            })\n            .catch(error => {\n                showMessage(`❌ Error editing model: ${error.message}`, 'error');\n            });\n        }\n        \n        function deleteModel(providerId, modelName, modelType) {\n            if (!confirm(`Delete model \"${modelName}\" from ${providerId}?\\n\\nThis action cannot be undone.`)) return;\n            \n            fetch('/api/models/delete', {\n                method: 'POST',\n                headers: { 'Content-Type': 'application/json' },\n                body: JSON.stringify({\n                    provider_type: modelType,\n                    provider_id: providerId,\n                    model_name: modelName\n                })\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    showMessage(`✅ Model \"${modelName}\" deleted`, 'success');\n                    // Remove the row with animation\n                    const row = document.getElementById(`model-row-${modelType}-${providerId}-${encodeURIComponent(modelName)}`);\n                    if (row) {\n                        row.style.transition = 'opacity 0.3s';\n                        row.style.opacity = '0';\n                        setTimeout(() => {\n                            loadConfigurationTables(); // Refresh tables\n                            loadCustomModels(); // Refresh dropdowns\n                        }, 300);\n                    }\n                } else {\n                    showMessage(`❌ Failed to delete model: ${data.error}`, 'error');\n                }\n            })\n            .catch(error => {\n                showMessage(`❌ Error deleting model: ${error.message}`, 'error');\n            });\n        }\n        \n        function showActiveModelWarning(providerId, modelName, modelType) {\n            alert(`Cannot delete \"${modelName}\" because it is currently the active ${modelType.toUpperCase()} model.\\n\\nTo delete this model, first select a different ${modelType} model in the configuration form below.`);\n        }\n        \n        function addModelToProvider(providerId, modelType) {\n            const modelName = prompt(`Enter new ${modelType.toUpperCase()} model name for ${providerId}:`);\n            if (!modelName) return;\n            \n            fetch('/api/models/add', {\n                method: 'POST',\n                headers: { 'Content-Type': 'application/json' },\n                body: JSON.stringify({\n                    type: modelType,\n                    provider: providerId,\n                    name: modelName.trim()\n                })\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    showMessage(`✅ Model \"${modelName}\" added to ${providerId}`, 'success');\n                    loadConfigurationTables(); // Refresh tables\n                    loadCustomModels(); // Refresh dropdowns\n                } else {\n                    showMessage(`❌ Failed to add model: ${data.error}`, 'error');\n                }\n            })\n            .catch(error => {\n                showMessage(`❌ Error adding model: ${error.message}`, 'error');\n            });\n        }\n        \n        function refreshConfiguration() {\n            showMessage('Refreshing configuration...', 'info');\n            loadConfigurationTables();\n            loadCustomModels();\n        }\n        \n        function exportConfiguration() {\n            fetch('/api/config/export')\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    const blob = new Blob([JSON.stringify(data.config, null, 2)], { type: 'application/json' });\n                    const url = URL.createObjectURL(blob);\n                    const a = document.createElement('a');\n                    a.href = url;\n                    a.download = `model-config-${new Date().toISOString().split('T')[0]}.json`;\n                    a.click();\n                    URL.revokeObjectURL(url);\n                    showMessage('✅ Configuration exported successfully', 'success');\n                } else {\n                    showMessage(`❌ Failed to export: ${data.error}`, 'error');\n                }\n            })\n            .catch(error => {\n                showMessage(`❌ Export error: ${error.message}`, 'error');\n            });\n        }\n        \n        function resetAllConfiguration() {\n            if (!confirm('Reset ALL model configuration?\\n\\nThis will:\\n• Delete all custom models\\n• Delete all custom providers\\n• Reset to default settings\\n\\nThis action cannot be undone!')) return;\n            \n            fetch('/api/config/reset', {\n                method: 'POST',\n                headers: { 'Content-Type': 'application/json' }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    showMessage('✅ Configuration reset successfully! Reloading page...', 'success');\n                    setTimeout(() => window.location.reload(), 2000);\n                } else {\n                    showMessage(`❌ Failed to reset: ${data.error}`, 'error');\n                }\n            })\n            .catch(error => {\n                showMessage(`❌ Reset error: ${error.message}`, 'error');\n            });\n        }\n        \n        function showError(message) {\n            document.getElementById('llm-models-tbody').innerHTML = `\n                <tr><td colspan=\"5\" class=\"text-center text-danger py-4\">\n                    <i class=\"fas fa-exclamation-triangle fa-2x mb-2\"></i><br>\n                    ${message}\n                </td></tr>`;\n            document.getElementById('embedding-models-tbody').innerHTML = `\n                <tr><td colspan=\"5\" class=\"text-center text-danger py-4\">\n                    <i class=\"fas fa-exclamation-triangle fa-2x mb-2\"></i><br>\n                    ${message}\n                </td></tr>`;\n        }
+        
+        // Test model connection function
+        function testModelConnection(testType) {
+            const providerSelect = document.getElementById(`${testType}-provider-select`);
+            const modelSelect = document.getElementById(`${testType}-model-select`);
+            const testBtn = document.getElementById(`${testType}-test-btn`);
+            const resultDiv = document.getElementById(`${testType}-test-result`);
+            
+            const provider = providerSelect.value;
+            const model = modelSelect.value;
+            
+            if (!provider || !model) {
+                resultDiv.innerHTML = '<div class="alert alert-warning alert-sm">Please select both provider and model</div>';
+                return;
+            }
+            
+            // Disable button and show loading
+            testBtn.disabled = true;
+            testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
+            resultDiv.innerHTML = '<div class="text-info"><i class="fas fa-clock"></i> Testing connection...</div>';
+            
+            // Prepare request data
+            const requestData = {
+                provider: provider,
+                model: model,
+                test_type: testType
+            };
+            
+            // Add API key for Ollama Cloud
+            if (provider === 'ollama-cloud') {
+                const ollamaApiKey = document.getElementById('ollama_api_key')?.value;
+                if (ollamaApiKey) {
+                    requestData.api_key = ollamaApiKey;
+                }
+            }
+            
+            // Make API call
+            fetch('/api/models/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    resultDiv.innerHTML = `<div class="alert alert-success alert-sm">
+                        ${data.message}
+                        ${data.response ? `<br><small>Response: ${data.response}</small>` : ''}
+                        ${data.dimensions ? `<br><small>Dimensions: ${data.dimensions}</small>` : ''}
+                    </div>`;
+                } else {
+                    resultDiv.innerHTML = `<div class="alert alert-danger alert-sm">
+                        ❌ ${data.error}
+                    </div>`;
+                }
+            })
+            .catch(error => {
+                resultDiv.innerHTML = `<div class="alert alert-danger alert-sm">
+                    ❌ Network error: ${error.message}
+                </div>`;
+            })
+            .finally(() => {
+                // Re-enable button
+                testBtn.disabled = false;
+                testBtn.innerHTML = testType === 'llm' 
+                    ? '<i class="fas fa-plug"></i> Test LLM Connection'
+                    : '<i class="fas fa-project-diagram"></i> Test Embedding Connection';
+            });
+        }
+        
+        // Add custom model function
+        async function addModel(type) {
+            const providerSelect = document.getElementById(`${type}-provider-select`);
+            const modelSelect = document.getElementById(`${type}-model-select`);
+            const customInput = document.getElementById(`custom-${type}-input`);
+            
+            const provider = providerSelect.value;
+            const customModelName = customInput.value.trim();
+            
+            if (!customModelName) {
+                alert('Please enter a model name');
+                return;
+            }
+            
+            // Check if model already exists
+            const existingOptions = Array.from(modelSelect.options).map(opt => opt.value);
+            if (existingOptions.includes(customModelName)) {
+                alert('Model already exists');
+                return;
+            }
+            
+            try {
+                // Save to server
+                const response = await fetch('/api/models/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: type,
+                        provider: provider,
+                        name: customModelName
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Add to modelOptions data structure
+                    if (!modelOptions[type][provider]) {
+                        modelOptions[type][provider] = [];
+                    }
+                    
+                    modelOptions[type][provider].push({
+                        value: customModelName,
+                        text: customModelName + ' (Custom)',
+                        custom: true
+                    });
+                    
+                    // Refresh the dropdown
+                    updateModelOptions(type);
+                    
+                    // Select the newly added model
+                    modelSelect.value = customModelName;
+                    updatePreview(type);
+                    
+                    // Clear the input
+                    customInput.value = '';
+                    
+                    // Show success message
+                    showMessage(data.message, 'success');
+                } else {
+                    showMessage(`❌ Failed to add model: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error adding custom model:', error);
+                showMessage(`❌ Error adding model: ${error.message}`, 'error');
+            }
+        }
+        
+        // Remove model function
+        async function removeModel(type) {
+            const providerSelect = document.getElementById(`${type}-provider-select`);
+            const modelSelect = document.getElementById(`${type}-model-select`);
+            
+            const provider = providerSelect.value;
+            const selectedModel = modelSelect.value;
+            
+            if (!selectedModel) {
+                alert('Please select a model to remove');
+                return;
+            }
+            
+            // Check if it's a custom model
+            const modelData = modelOptions[type][provider];
+            const modelIndex = modelData.findIndex(m => m.value === selectedModel);
+            
+            if (modelIndex === -1) {
+                alert('Model not found');
+                return;
+            }
+            
+            const isCustom = modelData[modelIndex].custom;
+            
+            if (!isCustom) {
+                // Don't allow removal of built-in models
+                alert('Cannot remove built-in models. Only custom models can be removed.');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to remove the custom model "${selectedModel}"?`)) {
+                return;
+            }
+            
+            try {
+                // Remove from server using new endpoint
+                const response = await fetch('/api/models/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        provider_type: type,
+                        provider_id: provider,
+                        model_name: selectedModel
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Remove from modelOptions
+                    modelData.splice(modelIndex, 1);
+                    
+                    // Refresh the dropdown
+                    updateModelOptions(type);
+                    
+                    // Select first available model if any
+                    if (modelSelect.options.length > 0) {
+                        modelSelect.selectedIndex = 0;
+                        updatePreview(type);
+                    }
+                    
+                    // Show success message
+                    showMessage(data.message, 'info');
+                } else {
+                    showMessage(`❌ Failed to remove model: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error removing custom model:', error);
+                showMessage(`❌ Error removing model: ${error.message}`, 'error');
+            }
+        }
+        
+        // Show message function
+        function showMessage(message, type = 'info') {
+            const alertClass = type === 'success' ? 'alert-success' : 
+                              type === 'error' ? 'alert-danger' : 'alert-info';
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
+            messageDiv.style.cssText = 'top: 20px; right: 20px; z-index: 1050; max-width: 400px;';
+            messageDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            document.body.appendChild(messageDiv);
+            
+            // Auto-remove after 3 seconds
+            setTimeout(() => {
+                if (messageDiv.parentNode) {
+                    messageDiv.remove();
+                }
+            }, 3000);
+        }
+        function showNotification(message, type = 'info') {
+            // Use existing showMessage function
+            showMessage(message, type);
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function testProviderConnection(providerId, providerType) {
+            // Quick test for provider availability
+            showMessage(`Testing ${providerId} ${providerType} provider...`, 'info');
+            
+            fetch('/api/models/test-simple', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    provider: providerId,
+                    type: providerType
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`✅ ${providerId} provider test successful`, 'success');
+                } else {
+                    showMessage(`❌ ${providerId} provider test failed: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`❌ ${providerId} provider test failed: ${error.message}`, 'error');
+            });
+        }
+        
+        function refreshProviderOverview() {
+            // Refresh the provider overview section
+            fetch('/api/providers')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`📊 Found ${data.total_llm_providers} LLM providers and ${data.total_embedding_providers} embedding providers`, 'info');
+                } else {
+                    showMessage('❌ Failed to refresh provider information', 'error');
+                }
+            })
+            .catch(error => {
+                showMessage('❌ Network error while refreshing providers', 'error');
+            });
+        }
+        
+        // Provider Modal Functions
+        function openProviderModal(providerId, providerType, providerInfo) {
+            console.log('Opening modal for:', providerId, providerType, providerInfo);
+            
+            // Populate modal fields
+            document.getElementById('modal-provider-id').value = providerId;
+            document.getElementById('modal-provider-type').value = providerType.toUpperCase();
+            document.getElementById('modal-display-name').value = providerInfo.display_name || providerId;
+            
+            // Set base URL if available
+            const baseUrlField = document.getElementById('modal-base-url');
+            if (providerInfo.base_url) {
+                baseUrlField.value = providerInfo.base_url;
+            } else {
+                baseUrlField.value = 'Default endpoint';
+            }
+            
+            // Configure API key field
+            const apiKeyField = document.getElementById('modal-api-key');
+            const apiKeyLabel = document.querySelector('label[for="modal-api-key"]');
+            if (providerInfo.api_key_env) {
+                apiKeyLabel.textContent = `API Key (${providerInfo.api_key_env}) *`;
+                apiKeyField.placeholder = `Enter your ${providerInfo.display_name} API key`;
+            } else {
+                apiKeyLabel.textContent = 'API Key';
+                apiKeyField.placeholder = 'API key (if required)';
+            }
+            
+            // Load existing models for this provider
+            loadProviderModels(providerId, providerType);
+            
+            // Show provider-specific configuration
+            showProviderSpecificConfig(providerId);
+            
+            // Update modal title
+            document.getElementById('providerConfigModalLabel').innerHTML = 
+                `<i class="fas fa-cog"></i> Configure ${providerInfo.display_name} (${providerType.toUpperCase()})`;
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('providerConfigModal'));
+            modal.show();
+        }
+        
+        function loadProviderModels(providerId, providerType) {
+            const modelsList = document.getElementById('available-models-list');
+            modelsList.innerHTML = '<div class="text-muted">Loading models...</div>';
+            
+            // Fetch existing models for this provider
+            fetch('/api/providers')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const providerData = data.providers[`${providerType}_providers`][providerId];
+                    if (providerData && providerData.models && providerData.models.length > 0) {
+                        let modelsHtml = '';
+                        providerData.models.forEach(model => {
+                            modelsHtml += `
+                                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border rounded">
+                                    <span class="badge bg-secondary">${model}</span>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeModelFromProvider('${model}', '${providerId}', '${providerType}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            `;
+                        });
+                        modelsList.innerHTML = modelsHtml;
+                    } else {
+                        modelsList.innerHTML = '<div class="text-muted">No models configured yet</div>';
+                    }
+                } else {
+                    modelsList.innerHTML = '<div class="text-danger">Failed to load models</div>';
+                }
+            })
+            .catch(error => {
+                modelsList.innerHTML = '<div class="text-danger">Error loading models</div>';
+            });
+        }
+        
+        function showProviderSpecificConfig(providerId) {
+            const specialConfig = document.getElementById('specialConfigSection');
+            const azureConfig = document.getElementById('azure-specific');
+            const ollamaConfig = document.getElementById('ollama-specific');
+            
+            // Hide all specific configs first
+            azureConfig.style.display = 'none';
+            ollamaConfig.style.display = 'none';
+            specialConfig.style.display = 'none';
+            
+            if (providerId.includes('azure')) {
+                specialConfig.style.display = 'block';
+                azureConfig.style.display = 'block';
+            } else if (providerId.includes('ollama')) {
+                specialConfig.style.display = 'block';
+                ollamaConfig.style.display = 'block';
+            }
+        }
+        
+        function addModelToProvider() {
+            const modelName = document.getElementById('modal-new-model').value.trim();
+            const providerId = document.getElementById('modal-provider-id').value;
+            const providerType = document.getElementById('modal-provider-type').value.toLowerCase();
+            
+            if (!modelName) {
+                showMessage('Please enter a model name', 'warning');
+                return;
+            }
+            
+            // Send request to add model
+            fetch('/api/models/add', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    provider_id: providerId,
+                    provider_type: providerType,
+                    model_name: modelName
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`✅ Model "${modelName}" added to ${providerId}`, 'success');
+                    document.getElementById('modal-new-model').value = '';
+                    loadProviderModels(providerId, providerType);
+                } else {
+                    showMessage(`❌ Failed to add model: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`❌ Error adding model: ${error.message}`, 'error');
+            });
+        }
+        
+        function removeModelFromProvider(modelName, providerId, providerType) {
+            if (!confirm(`Remove model "${modelName}" from ${providerId}?\\n\\nThis will delete the model from your custom models list.`)) {
+                return;
+            }
+            
+            fetch('/api/models/delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    provider_id: providerId,
+                    provider_type: providerType,
+                    model_name: modelName
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`✅ Model "${modelName}" removed from ${providerId}`, 'success');
+                    loadProviderModels(providerId, providerType);
+                    // Refresh the provider overview table
+                    location.reload(); 
+                } else {
+                    showMessage(`❌ Failed to remove model: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`❌ Error removing model: ${error.message}`, 'error');
+            });
+        }
+        
+        function testProviderInModal() {
+            const providerId = document.getElementById('modal-provider-id').value;
+            const providerType = document.getElementById('modal-provider-type').value.toLowerCase();
+            const apiKey = document.getElementById('modal-api-key').value;
+            
+            showMessage(`🔄 Testing ${providerId} connection...`, 'info');
+            
+            fetch('/api/providers/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    provider_id: providerId,
+                    provider_type: providerType,
+                    api_key: apiKey
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`✅ ${providerId} connection successful!`, 'success');
+                } else {
+                    showMessage(`❌ ${providerId} connection failed: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`❌ Connection test error: ${error.message}`, 'error');
+            });
+        }
+        
+        function saveProviderConfiguration() {
+            const providerId = document.getElementById('modal-provider-id').value;
+            const providerType = document.getElementById('modal-provider-type').value.toLowerCase();
+            const apiKey = document.getElementById('modal-api-key').value;
+            
+            const configData = {
+                provider_id: providerId,
+                provider_type: providerType,
+                api_key: apiKey
+            };
+            
+            // Add Azure-specific config
+            if (providerId.includes('azure')) {
+                configData.azure_endpoint = document.getElementById('azure-endpoint').value;
+                configData.azure_api_version = document.getElementById('azure-api-version').value;
+                configData.azure_deployment = document.getElementById('azure-deployment').value;
+            }
+            
+            // Add Ollama-specific config
+            if (providerId.includes('ollama')) {
+                configData.ollama_url = document.getElementById('ollama-url').value;
+            }
+            
+            fetch('/api/providers/configure', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(configData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`✅ ${providerId} configured successfully!`, 'success');
+                    // Close modal
+                    bootstrap.Modal.getInstance(document.getElementById('providerConfigModal')).hide();
+                    // Refresh the provider overview
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showMessage(`❌ Configuration failed: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showMessage(`❌ Configuration error: ${error.message}`, 'error');
+            });
+        }
+        
+        // Add event listeners for provider rows
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click listeners to provider rows
+            document.querySelectorAll('.provider-row').forEach(row => {
+                row.addEventListener('click', function() {
+                    const providerId = this.getAttribute('data-provider-id');
+                    const providerType = this.getAttribute('data-provider-type');
+                    const providerInfo = JSON.parse(this.getAttribute('data-provider-info') || '{}');
+                    openProviderModal(providerId, providerType, providerInfo);
+                });
+            });
+        });
+    </script>
+
+    <!-- Provider Configuration Modal -->
+    <div class="modal fade" id="providerConfigModal" tabindex="-1" aria-labelledby="providerConfigModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="providerConfigModalLabel">
+                        <i class="fas fa-cog"></i> Configure Provider
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="providerConfigForm">
+                        <div class="provider-config-form">
+                            <!-- Provider Information -->
+                            <div class="config-section">
+                                <h6 class="mb-3"><i class="fas fa-info-circle"></i> Provider Information</h6>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label">Provider ID</label>
+                                            <input type="text" class="form-control" id="modal-provider-id" readonly>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label">Provider Type</label>
+                                            <input type="text" class="form-control" id="modal-provider-type" readonly>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Display Name</label>
+                                    <input type="text" class="form-control" id="modal-display-name" readonly>
+                                </div>
+                            </div>
+                            
+                            <!-- API Configuration -->
+                            <div class="config-section" id="apiConfigSection">
+                                <h6 class="mb-3"><i class="fas fa-key"></i> API Configuration</h6>
+                                <div class="mb-3" id="apiKeyField">
+                                    <label class="form-label">API Key <span class="text-danger">*</span></label>
+                                    <input type="password" class="form-control" id="modal-api-key" placeholder="Enter your API key">
+                                    <div class="form-text">This will be saved to environment variables for secure access</div>
+                                </div>
+                                <div class="mb-3" id="endpointField">
+                                    <label class="form-label">Base URL/Endpoint</label>
+                                    <input type="url" class="form-control" id="modal-base-url" readonly>
+                                </div>
+                            </div>
+                            
+                            <!-- Model Selection/Addition -->
+                            <div class="config-section">
+                                <h6 class="mb-3"><i class="fas fa-brain"></i> Model Configuration</h6>
+                                <div class="mb-3">
+                                    <label class="form-label">Available Models</label>
+                                    <div id="available-models-list" class="mb-2">
+                                        <!-- Models will be populated here -->
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Add New Model</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control" id="modal-new-model" placeholder="Enter model name (e.g., gpt-4, llama3.2:11b)">
+                                        <button type="button" class="btn btn-outline-primary" onclick="addModelToProvider()">
+                                            <i class="fas fa-plus"></i> Add Model
+                                        </button>
+                                    </div>
+                                    <div class="form-text">Add models that are available for this provider</div>
+                                </div>
+                            </div>
+                            
+                            <!-- Special Configuration for Different Providers -->
+                            <div class="config-section" id="specialConfigSection" style="display: none;">
+                                <h6 class="mb-3"><i class="fas fa-tools"></i> Advanced Configuration</h6>
+                                <div id="azure-specific" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Azure Endpoint</label>
+                                                <input type="url" class="form-control" id="azure-endpoint" placeholder="https://your-resource.openai.azure.com">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">API Version</label>
+                                                <input type="text" class="form-control" id="azure-api-version" value="2024-02-15-preview">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Deployment Name</label>
+                                        <input type="text" class="form-control" id="azure-deployment" placeholder="Your model deployment name">
+                                    </div>
+                                </div>
+                                <div id="ollama-specific" style="display: none;">
+                                    <div class="mb-3">
+                                        <label class="form-label">Ollama Server URL</label>
+                                        <input type="url" class="form-control" id="ollama-url" value="http://localhost:11434">
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="fetch-ollama-models">
+                                        <label class="form-check-label" for="fetch-ollama-models">
+                                            Auto-fetch available models from server
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="testProviderInModal()">
+                        <i class="fas fa-plug"></i> Test Connection
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="saveProviderConfiguration()">
+                        <i class="fas fa-save"></i> Save & Configure
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function deleteModelConfiguration() {
+            if (!confirm('Are you sure you want to delete the saved model configuration?\\n\\nThis will:\\n• Remove all saved model settings\\n• Clear API keys from environment\\n• Reset to default configuration\\n\\nThis action cannot be undone.')) {
+                return;
+            }
+            
+            // Show loading state
+            const deleteBtn = event.target.closest('button');
+            const originalContent = deleteBtn.innerHTML;
+            deleteBtn.disabled = true;
+            deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+            
+            fetch('/api/config/delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Configuration deleted successfully! The page will reload to show default settings.');
+                    // Reload the page to show default/empty configuration
+                    window.location.reload();
+                } else {
+                    alert('Error deleting configuration: ' + (data.message || data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error deleting configuration: ' + error.message);
+            })
+            .finally(() => {
+                // Restore button state
+                deleteBtn.disabled = false;
+                deleteBtn.innerHTML = originalContent;
+            });
+        }
+    </script>
+    
+    <!-- Model Selector Fix Script -->
+    <script src="/static/js/model_selector_fix.js"></script>
+</body>
+</html>
