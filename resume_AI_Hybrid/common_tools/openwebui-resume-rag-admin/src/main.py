@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, send_file
 import sys
 import os
 import json
@@ -326,6 +326,66 @@ def load_custom_models():
         print(f"❌ Error loading custom models: {e}")
         # Return empty structure on error
         return {"embedding": {}, "llm": {}}
+
+def create_candidate_prompt(query_text, formatted_sources):
+    """Create a prompt for candidate scoring and ranking"""
+    
+    # Build context from all sources
+    context_parts = []
+    for i, source in enumerate(formatted_sources, 1):
+        candidate_name = source.get('candidate_name', f'Candidate {i}')
+        content = source.get('content', '')
+        
+        context_parts.append(f"""
+==== CANDIDATE {i}: {candidate_name} ====
+{content[:2000]}  # Limit content to avoid token limits
+{'...' if len(content) > 2000 else ''}
+""")
+    
+    context = '\n'.join(context_parts)
+    
+    # Create enhanced prompt for scoring
+    enhanced_prompt_template = f"""You are an expert resume analyst. Based on the provided context, analyze each resume for relevance to the query: "{query_text}"
+
+For each resume, you must provide EXACTLY this format:
+
+==RESUME_START==
+RESUME_NAME: [candidate name or filename]
+SCORE: [number from 0-100]
+JUSTIFICATION: [brief explanation for the score]
+KEY_EXTRACT_1: [specific relevant text from resume]
+KEY_EXTRACT_2: [specific relevant text from resume] 
+KEY_EXTRACT_3: [specific relevant text from resume]
+==RESUME_END==
+
+Context:
+{context}
+
+Question: {query_text}
+
+Analyze each resume and provide the structured scoring format above."""
+    
+    return enhanced_prompt_template
+
+def get_llm_response(prompt, model=None, provider=None):
+    """Get LLM response using the specified model and provider"""
+    try:
+        # Get the dynamic LLM based on provider and model
+        llm = get_dynamic_llm(provider, model)
+        
+        # Invoke the LLM with the prompt
+        response = llm.invoke(prompt)
+        
+        return response
+        
+    except Exception as e:
+        print(f"ERROR in get_llm_response: {e}")
+        # Return a mock response object with error content
+        class MockResponse:
+            def __init__(self, content):
+                self.content = content
+        
+        return MockResponse(f"Error getting LLM response: {str(e)}")
 
 def parse_scoring_response(llm_response, sources):
     """Parse LLM response to extract scores and rankings for each resume"""
@@ -702,11 +762,31 @@ Analyze each resume and provide the structured scoring format above."""
                             original_title = group_data['metadata'].get('original_title') or group_data['metadata'].get('display_filename') or original_name
                             file_path = group_data['metadata'].get('original_file_path') or group_data['metadata'].get('file_path', '')
                             
+                            # Clean up the display name - prefer candidate name over generated filenames
+                            candidate_name_from_meta = group_data['metadata'].get('candidate_name')
+                            
+                            if candidate_name_from_meta:
+                                # Use candidate name as the primary display title
+                                display_title = candidate_name_from_meta
+                            elif original_title.startswith('Resume_') and '_' in original_title:
+                                # This is a generated filename - try to clean it up
+                                import re
+                                # Remove hex IDs from filename
+                                cleaned = re.sub(r'_[a-f0-9]{8}', '', original_title)
+                                # Remove 'Resume_' prefix if nothing meaningful remains
+                                if cleaned == 'Resume.txt' or cleaned == 'Resume.pdf' or cleaned == 'Resume.docx':
+                                    display_title = candidate_name_from_meta or "Resume Document"
+                                else:
+                                    display_title = cleaned
+                            else:
+                                # Use original title as-is
+                                display_title = original_title
+                            
                             # Clean up the candidate name - prefer original title, then display filename
                             candidate_name = group_data['metadata'].get('candidate_name')
                             if not candidate_name:
                                 # Extract name from original title or display filename
-                                base_name = original_title.replace('.txt', '').replace('.pdf', '').replace('_', ' ').replace('-', ' ')
+                                base_name = original_title.replace('.txt', '').replace('.pdf', '').replace('.docx', '').replace('_', ' ').replace('-', ' ')
                                 # Remove common resume patterns and IDs
                                 import re
                                 base_name = re.sub(r'Resume[\s_-]*[a-f0-9]{8}', '', base_name, flags=re.IGNORECASE)
@@ -721,6 +801,7 @@ Analyze each resume and provide the structured scoring format above."""
                                 'collection': coll_name,
                                 'original_filename': original_name,
                                 'original_title': original_title,  # Store original upload name
+                                'display_title': display_title,    # Clean display name
                                 'original_file_path': file_path,   # Store path to original file
                                 'chunk_count': len(group_data['content_chunks']),
                                 'candidate_name': candidate_name,
@@ -728,6 +809,14 @@ Analyze each resume and provide the structured scoring format above."""
                                 'key_skills': group_data['metadata'].get('key_skills', 'N/A'),
                                 'recent_job_titles': group_data['metadata'].get('recent_job_titles', 'N/A'),
                                 'education': group_data['metadata'].get('education', 'N/A'),
+                                'location': group_data['metadata'].get('location', 'N/A'),
+                                'clearance': group_data['metadata'].get('clearance', 'None'),
+                                'current_job_title': group_data['metadata'].get('current_job_title', 'N/A'),
+                                'current_job_start_date': group_data['metadata'].get('current_job_start_date', 'N/A'),
+                                'current_job_months': group_data['metadata'].get('current_job_months', 0),
+                                'average_job_tenure_months': group_data['metadata'].get('average_job_tenure_months', 0),
+                                'job_flight_risk': group_data['metadata'].get('job_flight_risk', False),
+                                'months_until_looking': group_data['metadata'].get('months_until_looking', 0),
                                 'score': 0,  # Will be extracted from LLM response
                                 'justification': '',  # Will be extracted from LLM response
                                 'key_extracts': []  # Will be extracted from LLM response
@@ -751,8 +840,12 @@ Analyze each resume and provide the structured scoring format above."""
                 
                 # Process results if documents were found
                 if formatted_sources:
+                    # Use the provided model and provider parameters, or defaults
+                    current_model = model or "gpt-4"
+                    current_provider = provider or "azure-openai"
+                    
                     # Create the LLM prompt with candidate information
-                    candidate_prompt = create_candidate_prompt(user_query, formatted_sources)
+                    candidate_prompt = create_candidate_prompt(query_text, formatted_sources)
                     
                     # Get LLM response using selected model and provider
                     response = get_llm_response(candidate_prompt, current_model, current_provider)
@@ -760,8 +853,37 @@ Analyze each resume and provide the structured scoring format above."""
                     # Process LLM response and extract scoring data
                     llm_response = response.content if hasattr(response, 'content') else str(response)
                     
+                    # Extract token usage if available
+                    token_usage = {}
+                    if hasattr(response, 'response_metadata') and 'token_usage' in response.response_metadata:
+                        usage = response.response_metadata['token_usage']
+                        token_usage = {
+                            'prompt_tokens': usage.get('prompt_tokens', 0),
+                            'completion_tokens': usage.get('completion_tokens', 0),
+                            'total_tokens': usage.get('total_tokens', 0),
+                            'model_used': f"{current_provider}:{current_model}",
+                            'provider': current_provider,
+                            'model_name': current_model,
+                            'temperature': temperature if temperature is not None else 0.1
+                        }
+                    else:
+                        token_usage = {
+                            'prompt_tokens': 0,
+                            'completion_tokens': 0,
+                            'total_tokens': 0,
+                            'model_used': f"{current_provider}:{current_model}",
+                            'provider': current_provider,
+                            'model_name': current_model,
+                            'temperature': temperature if temperature is not None else 0.1
+                        }
+                    
                     # Parse the response to extract scores and rankings
                     parsed_scores = parse_scoring_response(llm_response, formatted_sources)
+                    
+                    # Debug: Verify display_title is present
+                    if parsed_scores['sources']:
+                        first_source = parsed_scores['sources'][0]
+                        print(f"DEBUG: First source has display_title='{first_source.get('display_title', 'MISSING')}', candidate_name='{first_source.get('candidate_name', 'MISSING')}'")
                     
                     all_results.append({
                         'collection': coll_name,
@@ -3116,26 +3238,35 @@ def api_bulk_upload(collection_name):
                             print(f"Processing uploaded file: {file.filename}")
                             success, resume_id, chunks_added = pipeline.add_resume(str(file_path), original_filename=file.filename)
                             print(f"✅ Result: success={success}, resume_id={resume_id}, chunks={chunks_added}")
-                            print(f"📊 Resume uploaded: {file.filename} ({'✅ SUCCESS' if success else 'FAILED'})")
+                            print(f"📊 Resume uploaded: {file.filename} ({'✅ SUCCESS' if success else '❌ FAILED'})")
+                            
+                            # Capture more detailed error if processing failed
+                            error_msg = None
+                            if not success:
+                                error_msg = f"Processing failed - check server logs for details. File: {file.filename}"
+                                print(f"❌ Upload failed for {file.filename} - success=False returned from add_resume")
+                            
                             results.append({
                                 'file': file.filename,
                                 'success': success,
                                 'chunks': chunks_added,
                                 'resume_id': resume_id,
                                 'resume_count': 1 if success else 0,  # Always 1 resume per file
-                                'error': None if success else "Failed to process file"
+                                'error': error_msg
                             })
                         except Exception as file_error:
-                            print(f"DETAILED ERROR processing {file.filename}: {str(file_error)}")
-                            print(f"ERROR TYPE: {type(file_error).__name__}")
+                            error_details = str(file_error)
+                            print(f"❌ DETAILED ERROR processing {file.filename}: {error_details}")
+                            print(f"❌ ERROR TYPE: {type(file_error).__name__}")
                             import traceback
-                            print(f"FULL TRACEBACK: {traceback.format_exc()}")
+                            traceback_str = traceback.format_exc()
+                            print(f"❌ FULL TRACEBACK: {traceback_str}")
                             results.append({
                                 'file': file.filename,
                                 'success': False,
                                 'chunks': 0,
                                 'resume_count': 0,  # Failed upload = 0 resumes
-                                'error': f"Error: {str(file_error)}"
+                                'error': f"{type(file_error).__name__}: {error_details}"
                             })
             
             success_count = sum(1 for r in results if r['success'])
@@ -3175,6 +3306,125 @@ def api_bulk_upload(collection_name):
             
     except Exception as e:
         return jsonify({"error": f"Bulk upload failed: {str(e)}"}), 500
+
+@app.route('/api/export_query_results', methods=['POST'])
+def export_query_results():
+    """Export query results to Excel file"""
+    try:
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from datetime import datetime
+        
+        data = request.json
+        results = data.get('results', [])
+        collection = data.get('collection', 'all')
+        query = data.get('query', 'query')
+        
+        if not results:
+            return jsonify({"success": False, "error": "No results to export"}), 400
+        
+        # Create workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Query Results"
+        
+        # Headers
+        headers = [
+            "Candidate Name", "Location", "Clearance", "Current Job", 
+            "Job Start Date", "Months in Current Job", "Years in Current Job",
+            "Average Job Tenure (Months)", "Job Status", "Key Skills", "Score"
+        ]
+        
+        # Style headers
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        # Data rows
+        looking_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+        
+        row_idx = 2
+        for candidate in results:
+            current_months = candidate.get('current_job_months', 0)
+            avg_months = candidate.get('average_job_tenure_months', 0)
+            months_until = candidate.get('months_until_looking', 0)
+            is_flight_risk = candidate.get('job_flight_risk', False)
+            
+            # Calculate job status
+            if is_flight_risk:
+                job_status = "Looking"
+            elif months_until > 0:
+                job_status = f"{months_until} months"
+            else:
+                job_status = "N/A"
+            
+            # Calculate years in current job
+            years_in_job = round(current_months / 12, 1) if current_months > 0 else 0
+            
+            row_data = [
+                candidate.get('candidate_name', 'N/A'),
+                candidate.get('location', 'N/A'),
+                candidate.get('clearance', 'None'),
+                candidate.get('current_job_title', 'N/A'),
+                candidate.get('current_job_start_date', 'N/A'),
+                current_months,
+                years_in_job,
+                avg_months,
+                job_status,
+                candidate.get('key_skills', 'N/A'),
+                candidate.get('score', 0)
+            ]
+            
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                
+                # Highlight "Looking" candidates
+                if is_flight_risk:
+                    cell.fill = looking_fill
+            
+            row_idx += 1
+        
+        # Adjust column widths
+        ws.column_dimensions['A'].width = 20  # Candidate Name
+        ws.column_dimensions['B'].width = 20  # Location
+        ws.column_dimensions['C'].width = 15  # Clearance
+        ws.column_dimensions['D'].width = 25  # Current Job
+        ws.column_dimensions['E'].width = 15  # Job Start Date
+        ws.column_dimensions['F'].width = 12  # Months in Job
+        ws.column_dimensions['G'].width = 12  # Years in Job
+        ws.column_dimensions['H'].width = 15  # Avg Tenure
+        ws.column_dimensions['I'].width = 15  # Job Status
+        ws.column_dimensions['J'].width = 40  # Key Skills
+        ws.column_dimensions['K'].width = 10  # Score
+        
+        # Save to BytesIO
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"query_results_{collection}_{timestamp}.xlsx"
+        
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        print(f"Error exporting to Excel: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.errorhandler(404)
 def page_not_found(error):

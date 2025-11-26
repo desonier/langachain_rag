@@ -267,7 +267,7 @@
                                     <label class="form-label fw-semibold">
                                         <i class="fas fa-cog"></i> Query Type
                                     </label>
-                                    <select class="form-select" id="queryTypeSelect" onchange="toggleMaxResults()">
+                                    <select class="form-select" id="queryTypeSelect">
                                         <option value="standard">Standard Query</option>
                                         <option value="ranking">Ranked Candidates</option>
                                     </select>
@@ -320,8 +320,8 @@
                                 </div>
                             </div>
 
-                            <!-- Max Results (for ranking) -->
-                            <div class="row mb-3" id="maxResultsRow" style="display: none;">
+                            <!-- Max Results -->
+                            <div class="row mb-3" id="maxResultsRow">
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold">
                                         <i class="fas fa-list-ol"></i> Max Results
@@ -330,6 +330,8 @@
                                         <option value="3">Top 3</option>
                                         <option value="5" selected>Top 5</option>
                                         <option value="10">Top 10</option>
+                                        <option value="15">Top 15</option>
+                                        <option value="20">Top 20</option>
                                     </select>
                                 </div>
                             </div>
@@ -375,12 +377,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        function toggleMaxResults() {
-            const queryType = document.getElementById('queryTypeSelect').value;
-            const maxResultsRow = document.getElementById('maxResultsRow');
-            maxResultsRow.style.display = queryType === 'ranking' ? 'block' : 'none';
-        }
-
         function showExamples() {
             const examples = document.getElementById('queryExamples');
             examples.style.display = examples.style.display === 'none' ? 'block' : 'none';
@@ -635,12 +631,19 @@
                             <div class="row mb-4">
                                 <div class="col-12">
                                     <div class="collection-results-header p-3 bg-light border-left-primary">
-                                        <h4 class="mb-1"><i class="fas fa-trophy text-warning"></i> Resume Rankings</h4>
-                                        <p class="text-muted mb-0">
-                                            <i class="fas fa-database"></i> Collection: <strong>${collectionResult.collection}</strong> | 
-                                            <i class="fas fa-users"></i> ${collectionResult.total_candidates || collectionResult.sources.length} candidates found | 
-                                            <i class="fas fa-sort-amount-down"></i> Ranked by relevance score (highest first)
-                                        </p>
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h4 class="mb-1"><i class="fas fa-trophy text-warning"></i> Resume Rankings</h4>
+                                                <p class="text-muted mb-0">
+                                                    <i class="fas fa-database"></i> Collection: <strong>${collectionResult.collection}</strong> | 
+                                                    <i class="fas fa-users"></i> ${collectionResult.total_candidates || collectionResult.sources.length} candidates found | 
+                                                    <i class="fas fa-sort-amount-down"></i> Ranked by relevance score (highest first)
+                                                </p>
+                                            </div>
+                                            <button class="btn btn-success" onclick="exportToExcel('${collectionResult.collection}', ${JSON.stringify(collectionResult.sources).replace(/'/g, '&apos;')})">
+                                                <i class="fas fa-file-excel"></i> Export to Excel
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -652,16 +655,23 @@
                             
                             // Handle both new and legacy resume formats
                             const candidateName = candidate.candidate_name || 'Resume Candidate';
-                            const originalTitle = candidate.original_title || candidate.original_filename;
+                            const displayTitle = candidate.display_title || candidate.original_title || candidate.original_filename;
                             const filePath = candidate.original_file_path || candidate.original_filename;
+                            const sourceDescription = `${displayTitle}${candidate.chunk_count > 1 ? ` (${candidate.chunk_count} sections)` : ''}`;
                             
                             // Use the original_filename as the identifier for the resume viewer
                             const viewerIdentifier = candidate.original_filename;
                             
+                            // Job tenure risk highlighting
+                            const isFlightRisk = candidate.job_flight_risk === true;
+                            const cardStyle = isFlightRisk ? 'border-left: 5px solid #ffc107; background-color: #fffbf0;' : '';
+                            const currentJobMonths = candidate.current_job_months || 0;
+                            const avgTenureMonths = candidate.average_job_tenure_months || 0;
+                            
                             html += `
                                 <div class="row mb-4">
                                     <div class="col-12">
-                                        <div class="resume-ranking-card">
+                                        <div class="resume-ranking-card" style="${cardStyle}">
                                             <!-- Resume Title with Score on Same Line -->
                                             <h5 class="resume-title-with-score mb-2">
                                                 <a href="#" class="resume-link text-primary" 
@@ -708,12 +718,34 @@
                                             
                                             <hr class="my-3">
                                             
+                                            <!-- Job Tenure Information -->
+                                            ${currentJobMonths > 0 || avgTenureMonths > 0 ? `
+                                                <div class="job-tenure-info mb-3 p-2 ${isFlightRisk ? 'bg-warning-light' : 'bg-light'} rounded">
+                                                    <h6 class="mb-2">
+                                                        <i class="fas fa-briefcase"></i> Job Tenure Analysis
+                                                        ${isFlightRisk ? '<span class="badge badge-warning ml-2"><i class="fas fa-exclamation-triangle"></i> Flight Risk</span>' : ''}
+                                                    </h6>
+                                                    <div class="row">
+                                                        <div class="col-md-6">
+                                                            <small><strong>Current Job Duration:</strong> ${(currentJobMonths / 12).toFixed(1)} years (${currentJobMonths} months)</small>
+                                                        </div>
+                                                        <div class="col-md-6">
+                                                            <small><strong>Average Job Tenure:</strong> ${(avgTenureMonths / 12).toFixed(1)} years (${avgTenureMonths} months)</small>
+                                                        </div>
+                                                    </div>
+                                                    ${isFlightRisk ? `
+                                                        <div class="alert alert-warning mt-2 mb-0 py-2">
+                                                            <small><i class="fas fa-info-circle"></i> <strong>Note:</strong> Current job duration is within 6 months of average tenure. Candidate may be considering new opportunities.</small>
+                                                        </div>
+                                                    ` : ''}
+                                                </div>
+                                            ` : ''}
+                                            
                                             <!-- Metadata Footer -->
                                             <div class="candidate-metadata">
                                                 <small class="text-muted">
                                                     <i class="fas fa-folder"></i> Collection: ${candidate.collection} | 
-                                                    <i class="fas fa-file"></i> Source: ${originalTitle}
-                                                    ${candidate.chunk_count > 1 ? ` (${candidate.chunk_count} chunks)` : ''}
+                                                    <i class="fas fa-file"></i> Source: ${sourceDescription}
                                                 </small>
                                             </div>
                                         </div>
@@ -733,15 +765,17 @@
                     `;
 
                     collectionResult.sources.forEach((doc, index) => {
-                        // Use the original filename that's now processed by the backend
-                        const originalName = doc.original_filename || 
+                        // Use the cleaned display title from the backend
+                        const originalName = doc.display_title || 
+                                           doc.original_title ||
+                                           doc.original_filename || 
                                            doc.metadata?.display_filename || 
                                            doc.metadata?.original_file_source?.split('\\').pop()?.split('/').pop() ||
                                            doc.metadata?.document_name || 
                                            'Unknown';
                         
                         // Show chunk count if multiple chunks were combined
-                        const chunkInfo = doc.chunk_count > 1 ? ` (${doc.chunk_count} chunks combined)` : '';
+                        const chunkInfo = doc.chunk_count > 1 ? ` (${doc.chunk_count} sections)` : '';
                         
                         html += `
                             <div class="col-md-4 mb-3">
@@ -928,6 +962,43 @@
             const targetFile = filepath && filepath !== 'undefined' ? filepath : filename;
             const url = `/view_resume?filename=${encodeURIComponent(filename)}&collection=${encodeURIComponent(collection)}&filepath=${encodeURIComponent(targetFile)}`;
             window.open(url, '_blank', 'width=800,height=600,scrollbars=yes,resizable=yes');
+        }
+
+        async function exportToExcel(collection, sources) {
+            try {
+                const queryText = document.getElementById('queryText').value;
+                
+                const response = await fetch('/api/export_query_results', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        collection: collection,
+                        query: queryText,
+                        results: sources
+                    })
+                });
+
+                if (response.ok) {
+                    // Download the file
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `query_results_${collection}_${new Date().getTime()}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                } else {
+                    const error = await response.json();
+                    alert('Export failed: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Export error:', error);
+                alert('Export failed: ' + error.message);
+            }
         }
     </script>
 </body>
