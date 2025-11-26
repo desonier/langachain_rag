@@ -3321,8 +3321,13 @@ def export_query_results():
         collection = data.get('collection', 'all')
         query = data.get('query', 'query')
         
+        print(f"DEBUG Export: Received {len(results)} results for collection '{collection}'")
+        print(f"DEBUG Export: Query: '{query}'")
+        
         if not results:
-            return jsonify({"success": False, "error": "No results to export"}), 400
+            error_msg = "No results to export"
+            print(f"ERROR Export: {error_msg}")
+            return jsonify({"success": False, "error": error_msg}), 400
         
         # Create workbook
         wb = openpyxl.Workbook()
@@ -3335,6 +3340,8 @@ def export_query_results():
             "Job Start Date", "Months in Current Job", "Years in Current Job",
             "Average Job Tenure (Months)", "Job Status", "Key Skills", "Score"
         ]
+        
+        print(f"DEBUG Export: Setting up Excel headers: {headers}")
         
         # Style headers
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -3350,6 +3357,7 @@ def export_query_results():
         looking_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
         
         row_idx = 2
+        export_count = 0
         for candidate in results:
             current_months = candidate.get('current_job_months', 0)
             avg_months = candidate.get('average_job_tenure_months', 0)
@@ -3368,7 +3376,7 @@ def export_query_results():
             years_in_job = round(current_months / 12, 1) if current_months > 0 else 0
             
             row_data = [
-                candidate.get('candidate_name', 'N/A'),
+                candidate.get('candidate_name', candidate.get('display_title', candidate.get('original_filename', 'N/A'))),
                 candidate.get('location', 'N/A'),
                 candidate.get('clearance', 'None'),
                 candidate.get('current_job_title', 'N/A'),
@@ -3390,6 +3398,9 @@ def export_query_results():
                     cell.fill = looking_fill
             
             row_idx += 1
+            export_count += 1
+        
+        print(f"DEBUG Export: Exported {export_count} candidates to Excel")
         
         # Adjust column widths
         ws.column_dimensions['A'].width = 20  # Candidate Name

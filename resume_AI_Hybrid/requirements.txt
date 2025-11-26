@@ -26,6 +26,9 @@ pandas
 flask
 gunicorn
 
+# Excel export
+openpyxl
+
 # ML and embeddings
 sentence-transformers
 

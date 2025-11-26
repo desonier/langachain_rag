@@ -369,12 +369,23 @@ class ResumeIngestPipeline:
             Extract the following fields:
             - candidate_name: Full name of the candidate
             - contact_info: Email, phone, location (as a single string)
+            - location: City and State only (e.g., "San Diego, CA")
+            - clearance: Security clearance level if mentioned (e.g., "TS/SCI", "Secret", "Top Secret", or "None")
             - key_skills: List of main technical and professional skills (max 10)
             - experience_years: Estimated total years of experience (as number)
             - education: Highest degree and field (as single string)
             - certifications: List of certifications mentioned (max 5)
             - job_titles: List of most recent job titles (max 3)
             - industries: List of industries/domains mentioned (max 3)
+            - job_history: List of jobs with start_date, end_date (or "Present"), company, and title for each position
+            - current_job_title: Title of current or most recent position
+            - current_job_start_date: Start date of current position in YYYY-MM format (e.g., "2023-06")
+            - current_job_months: Number of months in current/most recent position (as number)
+            - average_job_tenure_months: Average number of months spent per job across all positions (as number)
+            
+            For job_history, extract each position with approximate dates even if not exact (e.g., "2020" becomes "2020-01").
+            Calculate current_job_months from the most recent position.
+            Calculate average_job_tenure_months by finding the average duration across all positions.
             
             Return ONLY valid JSON without any explanation.
             
@@ -644,6 +655,45 @@ class ResumeIngestPipeline:
                     metadata['industries'] = ', '.join(industries)
                 elif industries:
                     metadata['industries'] = str(industries)
+            
+            # Add location and clearance
+            if extracted_info.get('location'):
+                metadata['location'] = extracted_info['location']
+            
+            if extracted_info.get('clearance'):
+                metadata['clearance'] = extracted_info['clearance']
+            
+            # Add current job details
+            if extracted_info.get('current_job_title'):
+                metadata['current_job_title'] = extracted_info['current_job_title']
+            
+            if extracted_info.get('current_job_start_date'):
+                metadata['current_job_start_date'] = extracted_info['current_job_start_date']
+            
+            # Add job tenure information
+            if extracted_info.get('current_job_months'):
+                try:
+                    metadata['current_job_months'] = int(extracted_info['current_job_months'])
+                except (ValueError, TypeError):
+                    metadata['current_job_months'] = 0
+            
+            if extracted_info.get('average_job_tenure_months'):
+                try:
+                    metadata['average_job_tenure_months'] = int(extracted_info['average_job_tenure_months'])
+                except (ValueError, TypeError):
+                    metadata['average_job_tenure_months'] = 0
+            
+            # Calculate if candidate is likely to leave soon (within 6 months of average)
+            if metadata.get('current_job_months') and metadata.get('average_job_tenure_months'):
+                current = metadata['current_job_months']
+                average = metadata['average_job_tenure_months']
+                # Flag if current job duration is within 6 months of their average tenure
+                if current >= (average - 6):
+                    metadata['job_flight_risk'] = True
+                    metadata['months_until_looking'] = 0
+                else:
+                    metadata['job_flight_risk'] = False
+                    metadata['months_until_looking'] = (average - 6) - current
         
         return metadata, resume_id
     
@@ -739,10 +789,22 @@ class ResumeIngestPipeline:
             return True, resume_id, len(docs)
             
         except Exception as e:
-            print(f"❌ DETAILED ERROR processing {file_path}: {str(e)}")
-            print(f"❌ ERROR TYPE: {type(e).__name__}")
+            error_msg = str(e)
+            error_type = type(e).__name__
+            print(f"❌ DETAILED ERROR processing {file_path}: {error_msg}")
+            print(f"❌ ERROR TYPE: {error_type}")
             import traceback
-            print(f"❌ FULL TRACEBACK: {traceback.format_exc()}")
+            traceback_str = traceback.format_exc()
+            print(f"❌ FULL TRACEBACK: {traceback_str}")
+            
+            # Store error for web interface
+            self.last_error = {
+                'file': file_path,
+                'error_type': error_type,
+                'error_message': error_msg,
+                'traceback': traceback_str
+            }
+            
             return False, None, 0
     
     def add_directory(self, directory_path, force_update=False):

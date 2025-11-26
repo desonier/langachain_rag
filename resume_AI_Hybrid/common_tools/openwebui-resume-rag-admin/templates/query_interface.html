@@ -625,7 +625,12 @@
                     const hasScoring = collectionResult.response_type === 'enhanced_scoring' || 
                                      collectionResult.sources.some(s => s.hasOwnProperty('score'));
                     
+                    // Store sources for export (use global variable) - for all result types
+                    window.lastQueryResults = window.lastQueryResults || {};
+                    window.lastQueryResults[collectionResult.collection] = collectionResult.sources;
+                    
                     if (hasScoring) {
+                        
                         // Enhanced scoring display - exact format requested
                         html += `
                             <div class="row mb-4">
@@ -640,7 +645,7 @@
                                                     <i class="fas fa-sort-amount-down"></i> Ranked by relevance score (highest first)
                                                 </p>
                                             </div>
-                                            <button class="btn btn-success" onclick="exportToExcel('${collectionResult.collection}', ${JSON.stringify(collectionResult.sources).replace(/'/g, '&apos;')})">
+                                            <button class="btn btn-success" onclick="exportToExcel('${collectionResult.collection}')">
                                                 <i class="fas fa-file-excel"></i> Export to Excel
                                             </button>
                                         </div>
@@ -755,14 +760,19 @@
                         });
                     } else {
                         // Standard source display (legacy)
-                    html += `
-                        <div class="row mb-4">
-                            <div class="col-12">
-                                <h6><i class="fas fa-file-alt text-info"></i> Source Documents from ${collectionResult.collection}</h6>
+                        html += `
+                            <div class="row mb-4">
+                                <div class="col-12">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <h6><i class="fas fa-file-alt text-info"></i> Source Documents from ${collectionResult.collection}</h6>
+                                        <button class="btn btn-success btn-sm" onclick="exportToExcel('${collectionResult.collection}')">
+                                            <i class="fas fa-file-excel"></i> Export to Excel
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                        <div class="row mb-4">
-                    `;
+                            <div class="row mb-4">
+                        `;
 
                     collectionResult.sources.forEach((doc, index) => {
                         // Use the cleaned display title from the backend
@@ -964,9 +974,49 @@
             window.open(url, '_blank', 'width=800,height=600,scrollbars=yes,resizable=yes');
         }
 
-        async function exportToExcel(collection, sources) {
+        async function exportToExcel(collection) {
             try {
                 const queryText = document.getElementById('queryText').value;
+                
+                // Get results from global variable
+                const sources = window.lastQueryResults && window.lastQueryResults[collection] 
+                    ? window.lastQueryResults[collection] 
+                    : [];
+                
+                console.log('Export Debug - Collection:', collection);
+                console.log('Export Debug - Sources found:', sources.length);
+                console.log('Export Debug - Available collections:', Object.keys(window.lastQueryResults || {}));
+                
+                if (!sources || sources.length === 0) {
+                    // Try to get from all available results if specific collection not found
+                    const allSources = [];
+                    if (window.lastQueryResults) {
+                        Object.values(window.lastQueryResults).forEach(collectionSources => {
+                            if (Array.isArray(collectionSources)) {
+                                allSources.push(...collectionSources);
+                            }
+                        });
+                    }
+                    
+                    if (allSources.length > 0) {
+                        console.log('Using all available sources:', allSources.length);
+                        const response = await fetch('/api/export_query_results', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                collection: 'all',
+                                query: queryText,
+                                results: allSources
+                            })
+                        });
+                        await handleExportResponse(response);
+                    } else {
+                        alert('No results to export. Please run a query first.');
+                    }
+                    return;
+                }
                 
                 const response = await fetch('/api/export_query_results', {
                     method: 'POST',
@@ -980,24 +1030,29 @@
                     })
                 });
 
-                if (response.ok) {
-                    // Download the file
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `query_results_${collection}_${new Date().getTime()}.xlsx`;
-                    document.body.appendChild(a);
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    document.body.removeChild(a);
-                } else {
-                    const error = await response.json();
-                    alert('Export failed: ' + (error.error || 'Unknown error'));
-                }
+                await handleExportResponse(response);
+                
             } catch (error) {
                 console.error('Export error:', error);
                 alert('Export failed: ' + error.message);
+            }
+        }
+
+        async function handleExportResponse(response) {
+            if (response.ok) {
+                // Download the file
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `query_results_${new Date().getTime()}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } else {
+                const error = await response.json();
+                alert('Export failed: ' + (error.error || 'Unknown error'));
             }
         }
     </script>
